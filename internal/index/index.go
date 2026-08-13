@@ -309,6 +309,25 @@ func (d *DB) States(ctx context.Context, root string) (map[string]FileState, err
 	return states, rows.Err()
 }
 
+// State は 1 件のファイルの状態を返す。見つからなければ ok が false になる。
+func (d *DB) State(ctx context.Context, root, imgPath string) (FileState, bool, error) {
+	var (
+		state FileState
+		mtime int64
+	)
+	err := d.db.QueryRowContext(ctx,
+		`SELECT id, size, mtime FROM images WHERE root = ? AND path = ?`, root, imgPath).
+		Scan(&state.ID, &state.Size, &mtime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FileState{}, false, nil
+	}
+	if err != nil {
+		return FileState{}, false, fmt.Errorf("index: get state %s: %w", imgPath, err)
+	}
+	state.ModTime = time.Unix(0, mtime).UTC()
+	return state, true, nil
+}
+
 func (d *DB) loadTags(ctx context.Context, img *Image) error {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT kind, tag FROM image_tags WHERE image_id = ? ORDER BY kind, seq`, img.ID)
