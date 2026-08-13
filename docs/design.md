@@ -107,7 +107,12 @@ SQLite を単一ファイルで持つ。FTS5 が必要なため、cgo 不要で 
 | `GET /api/tags` | タグ補完候補（前方一致・出現頻度順） |
 | `GET /api/thumb/{id}` | サムネイル画像 |
 | `GET /api/raw/{id}` | 原画像 |
-| `GET /api/status` | スキャン進捗とインデックス統計（Server-Sent Events） |
+| `GET /api/status` | スキャン進捗とインデックス統計 |
+| `GET /api/events` | 同じ内容を Server-Sent Events で流し続ける |
+
+絞り込み条件はクエリ文字列で渡す。`model` や `tag` のように同名のパラメータを複数指定でき、同名どうしは OR、異なる項目どうしは AND として扱う。解釈できない値は指定がなかったものとみなし、エラーにはしない。
+
+画面側のルーティングを壊さないよう、`/api/` 以外の見つからないパスには `index.html` を返す。
 
 ## フロントエンド
 
