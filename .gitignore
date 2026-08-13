@@ -2,7 +2,8 @@
 /sd-viewer
 /dist/
 /web/dist/
-/internal/server/webui/dist/
+/internal/server/webui/dist/*
+!/internal/server/webui/dist/.gitkeep
 
 # Dependencies
 /web/node_modules/
