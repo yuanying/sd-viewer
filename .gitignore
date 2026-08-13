@@ -1,0 +1,20 @@
+# Build artifacts
+/sd-viewer
+/dist/
+/web/dist/
+/internal/server/webui/dist/
+
+# Dependencies
+/web/node_modules/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+/testdata/tmp/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
