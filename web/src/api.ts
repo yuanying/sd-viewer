@@ -1,5 +1,5 @@
 import { filtersToSearch, type Filters } from "./filters";
-import type { FacetSet, Image, SearchResult, Status, TagCount } from "./types";
+import type { FacetSet, Image, SearchResult, SendTarget, Status, TagCount } from "./types";
 
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
@@ -37,6 +37,20 @@ export function suggestTags(q: string, limit = 12, signal?: AbortSignal): Promis
 
 export function fetchStatus(signal?: AbortSignal): Promise<Status> {
   return getJSON<Status>("/api/status", signal);
+}
+
+/** sendToWebUI は生成情報を WebUI の入力欄へ送り込む。 */
+export async function sendToWebUI(id: number, target: SendTarget): Promise<void> {
+  const res = await fetch("/api/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, target }),
+  });
+  if (!res.ok) {
+    // サーバは理由を JSON の error に入れて返す。
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+  }
 }
 
 export function thumbUrl(id: number): string {

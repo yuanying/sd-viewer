@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yuanying/sd-viewer/internal/bridge"
 	"github.com/yuanying/sd-viewer/internal/index"
 	"github.com/yuanying/sd-viewer/internal/scanner"
 	"github.com/yuanying/sd-viewer/internal/server"
@@ -27,6 +28,7 @@ import (
 type config struct {
 	dirs      dirList
 	addr      string
+	webUIURL  string
 	dataDir   string
 	thumbSize int
 	noWatch   bool
@@ -120,6 +122,17 @@ func run() error {
 		}
 	}()
 
+	// 送り先が設定されているときだけ送信機能を有効にする。
+	var sender server.Sender
+	if cfg.webUIURL != "" {
+		client, err := bridge.New(cfg.webUIURL)
+		if err != nil {
+			return err
+		}
+		sender = client
+		log.Info("WebUI へ送信できます", "url", client.URL())
+	}
+
 	static := webui.FS()
 	if static == nil {
 		log.Warn("web assets are not built; serving API only (run: make build)")
@@ -130,6 +143,7 @@ func run() error {
 		Roots:   roots,
 		Scanner: sc,
 		Static:  static,
+		WebUI:   sender,
 		Logger:  log,
 	})
 
@@ -163,6 +177,7 @@ func parseFlags() (*config, error) {
 	cfg := &config{}
 	flag.Var(&cfg.dirs, "dir", "監視する出力ディレクトリ（複数指定可）")
 	flag.StringVar(&cfg.addr, "addr", ":8080", "待ち受けアドレス")
+	flag.StringVar(&cfg.webUIURL, "webui-url", "", "生成情報の送り先となる Stable Diffusion WebUI の URL（例: http://127.0.0.1:7860）")
 	flag.StringVar(&cfg.dataDir, "data-dir", defaultDataDir(), "インデックスとサムネイルの保存先")
 	flag.IntVar(&cfg.thumbSize, "thumb-size", 512, "サムネイルの長辺ピクセル数")
 	flag.BoolVar(&cfg.noWatch, "no-watch", false, "ファイル監視を行わず、起動時のスキャンだけ行う")

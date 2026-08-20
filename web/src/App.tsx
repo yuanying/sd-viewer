@@ -85,6 +85,7 @@ export default function App() {
           onClose={() => setSelected(null)}
           onPrev={() => move(-1)}
           onNext={() => move(1)}
+          canSend={status?.webui ?? false}
         />
       )}
     </div>

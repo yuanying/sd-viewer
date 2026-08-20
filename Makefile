@@ -1,7 +1,7 @@
 BIN := sd-viewer
 WEB_DIST := internal/server/webui/dist
 
-.PHONY: all build web test test-go test-web fmt vet dev clean clean-web
+.PHONY: all build web test test-go test-web test-extension fmt vet dev clean clean-web
 
 all: build
 
@@ -13,14 +13,17 @@ build: web
 web: clean-web
 	cd web && npm install --no-audit --no-fund && npm run build
 
-## test: Go と画面のテストを実行する
-test: test-go test-web
+## test: Go・画面・WebUI 拡張のテストを実行する
+test: test-go test-web test-extension
 
 test-go:
 	go test ./...
 
 test-web:
 	cd web && npm run test
+
+test-extension:
+	python3 -m unittest discover -s extension/sd-viewer-bridge/tests
 
 fmt:
 	gofmt -w .

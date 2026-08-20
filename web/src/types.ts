@@ -72,7 +72,12 @@ export interface Status {
     failed: number;
   };
   thumbnails: number;
+  /** WebUI へ生成情報を送れるかどうか。--webui-url を指定すると立つ。 */
+  webui: boolean;
 }
+
+/** 生成情報の送り先となる WebUI のタブ。 */
+export type SendTarget = "txt2img" | "img2img";
 
 export type SortOrder = "newest" | "oldest" | "name";
 

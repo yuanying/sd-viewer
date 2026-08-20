@@ -55,15 +55,30 @@ const status: Status = {
   roots: ["out"],
   scan: { scanning: false, walked: 3, indexed: 3, removed: 0, failed: 0 },
   thumbnails: 3,
+  webui: true,
 };
+
+/** webui は送信先の設定有無を切り替える。 */
+let webui = true;
+
+/** sent は画面が送った送信要求を覚える。 */
+let sent: { url: string; body: unknown }[] = [];
 
 /** stubFetch は API の応答を差し替える。 */
 function stubFetch() {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push(url);
+
+      if (url === "/api/send") {
+        sent.push({ url, body: JSON.parse(String(init?.body ?? "{}")) });
+        return new Response(JSON.stringify({ target: "txt2img" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
 
       const respond = (body: unknown) =>
         new Response(JSON.stringify(body), {
@@ -89,21 +104,28 @@ function stubFetch() {
         return respond([{ tag: "smile", count: 2 }] satisfies TagCount[]);
       }
       if (url.startsWith("/api/status")) {
-        return respond(status);
+        return respond({ ...status, webui });
       }
       return new Response("not found", { status: 404 });
     }),
   );
 }
 
-/** EventSource は happy-dom にないため、何もしない実装で置き換える。 */
+/** EventSource は happy-dom にないため、購読直後に状態を配る実装で置き換える。 */
 class StubEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
+  constructor() {
+    queueMicrotask(() => {
+      this.onmessage?.({ data: JSON.stringify({ ...status, webui }) } as MessageEvent);
+    });
+  }
   close() {}
 }
 
 beforeEach(() => {
   requests = [];
+  sent = [];
+  webui = true;
   window.history.replaceState(null, "", "/");
   stubFetch();
   vi.stubGlobal("EventSource", StubEventSource);
@@ -178,6 +200,34 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.queryByText("00001.png")).toBeNull());
     expect(window.location.search).toBe("?tag=smile");
+  });
+
+  it("詳細から txt2img と img2img へ送れる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+    await user.click(screen.getAllByRole("button", { name: /0000/ })[0]);
+    await screen.findByText("00001.png");
+
+    await user.click(screen.getByRole("button", { name: "txt2img へ送る" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0].body).toEqual({ id: 1, target: "txt2img" });
+
+    await user.click(screen.getByRole("button", { name: "img2img へ送る" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1].body).toEqual({ id: 1, target: "img2img" });
+  });
+
+  it("送り先が設定されていなければ送信ボタンを出さない", async () => {
+    webui = false;
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+    await user.click(screen.getAllByRole("button", { name: /0000/ })[0]);
+    await screen.findByText("00001.png");
+
+    expect(screen.queryByRole("button", { name: "txt2img へ送る" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "img2img へ送る" })).toBeNull();
   });
 
   it("条件をすべて解除すると元の一覧に戻る", async () => {
