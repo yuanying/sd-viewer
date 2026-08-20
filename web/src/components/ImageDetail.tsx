@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { fetchImage, rawUrl } from "../api";
+import { fetchImage, rawUrl, sendToWebUI } from "../api";
+import { copyText } from "../clipboard";
 import { errorMessage } from "../hooks";
 import { toggleFacet } from "../filters";
-import type { FacetKey, Filters, Image } from "../types";
+import type { FacetKey, Filters, Image, SendTarget } from "../types";
 
 interface Props {
   id: number;
@@ -11,10 +12,12 @@ interface Props {
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
+  /** WebUI へ送れるかどうか。送れないときは送信ボタンを出さない。 */
+  canSend: boolean;
 }
 
 /** ImageDetail は 1 枚の生成情報を並べ、そこから絞り込めるようにする。 */
-export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext }: Props) {
+export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext, canSend }: Props) {
   const [image, setImage] = useState<Image | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +79,7 @@ export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext }: 
         <div className="detail-meta">
           {error && <p className="error">{error}</p>}
           {!image && !error && <p className="notice">読み込み中…</p>}
-          {image && <Meta image={image} narrow={narrow} />}
+          {image && <Meta image={image} narrow={narrow} canSend={canSend} />}
         </div>
       </div>
     </div>
@@ -86,9 +89,11 @@ export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext }: 
 function Meta({
   image,
   narrow,
+  canSend,
 }: {
   image: Image;
   narrow: (key: FacetKey, value: string) => void;
+  canSend: boolean;
 }) {
   return (
     <>
@@ -96,6 +101,8 @@ function Meta({
       <p className="path">
         {image.root} / {image.dir}
       </p>
+
+      <Actions image={image} canSend={canSend} />
 
       <dl className="params">
         <Row label="生成日時">{new Date(image.created_at).toLocaleString()}</Row>
@@ -187,7 +194,6 @@ function Meta({
         <details className="raw">
           <summary>元のテキスト</summary>
           <pre>{image.raw}</pre>
-          <CopyButton text={image.raw} label="すべてコピー" />
         </details>
       )}
     </>
@@ -218,23 +224,78 @@ function Prompt({ title, text }: { title: string; text: string }) {
   );
 }
 
+/** Actions は 1 枚に対してできることを、詳細の先頭にまとめて並べる。 */
+function Actions({ image, canSend }: { image: Image; canSend: boolean }) {
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  /** report は結果をしばらく出してから消す。 */
+  const report = (message: string, isError: boolean) => {
+    setNotice(message);
+    setFailed(isError);
+    window.setTimeout(() => setNotice(null), 2500);
+  };
+
+  const send = (target: SendTarget) => {
+    sendToWebUI(image.id, target).then(
+      () => report(`${target} へ送りました`, false),
+      (err: unknown) => report(errorMessage(err), true),
+    );
+  };
+
+  const copy = (text: string, what: string) => {
+    copyText(text).then(
+      () => report(`${what}をコピーしました`, false),
+      () => report("コピーできませんでした", true),
+    );
+  };
+
+  return (
+    <div className="actions">
+      {canSend && (
+        <>
+          <button type="button" className="action" onClick={() => send("txt2img")}>
+            txt2img へ送る
+          </button>
+          <button type="button" className="action" onClick={() => send("img2img")}>
+            img2img へ送る
+          </button>
+        </>
+      )}
+      {image.raw && (
+        <button type="button" className="link" onClick={() => copy(image.raw!, "生成情報")}>
+          生成情報をコピー
+        </button>
+      )}
+      {notice && (
+        <span className={failed ? "actions-notice failed" : "actions-notice"}>{notice}</span>
+      )}
+    </div>
+  );
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   return (
     <button
       type="button"
-      className="link"
+      className={failed ? "link error" : "link"}
       onClick={() => {
-        navigator.clipboard.writeText(text).then(
+        copyText(text).then(
           () => {
+            setFailed(false);
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1500);
           },
-          () => setCopied(false),
+          () => {
+            setCopied(false);
+            setFailed(true);
+          },
         );
       }}
     >
-      {copied ? "コピーしました" : label}
+      {failed ? "コピーできません" : copied ? "コピーしました" : label}
     </button>
   );
 }

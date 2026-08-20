@@ -11,6 +11,7 @@ PNG に埋め込まれた生成パラメータを解析してインデックス�
 - **ファセット絞り込み** — モデル・LoRA・Sampler・解像度・日付・フォルダを件数付きで一覧し、組み合わせて絞り込む
 - **タグ補完** — プロンプト中の語を出現頻度付きでサジェスト
 - **自動追従** — ファイルシステムイベントを監視し、画像の追加・移動・削除をリアルタイムにインデックスへ反映
+- **WebUI へ送る** — 表示中の生成情報を WebUI の txt2img / img2img の入力欄へそのまま流し込む（別途 [拡張](extension/sd-viewer-bridge/) が要る）
 - **単一バイナリ** — フロントエンドを埋め込んだ 1 ファイルで動作
 
 ## ビルド
@@ -43,12 +44,33 @@ $ ./sd-viewer --dir ~/sd/output --dir /mnt/nas/sd-archive
 | --- | --- | --- |
 | `--dir` | （必須） | 監視対象の出力ディレクトリ。複数指定可 |
 | `--addr` | `:8080` | 待ち受けアドレス |
+| `--webui-url` | （なし） | 生成情報の送り先となる WebUI の URL。指定すると送信ボタンが出る |
 | `--data-dir` | `~/.cache/sd-viewer` | インデックス DB とサムネイルの保存先 |
 | `--thumb-size` | `512` | サムネイルの長辺ピクセル数 |
 | `--no-watch` | `false` | ファイル監視を無効にし、起動時スキャンのみ行う |
 | `-v` | `false` | 詳細なログを出力する |
 
 初回起動時に全画像を走査してインデックスとサムネイルを作る。手元の環境では 3,500 枚で 45 秒ほど、インデックスが 21MB、サムネイルが 109MB だった。2 回目以降は更新のあったファイルだけを読み直す。
+
+### WebUI へ送る
+
+詳細パネルの「txt2img へ送る」「img2img へ送る」で、表示中の生成情報を WebUI の入力欄へ
+そのまま入れられる。img2img では元画像が初期画像として入る。
+
+使うには WebUI 側へ [sd-viewer-bridge 拡張](extension/sd-viewer-bridge/) を入れ、
+sd-viewer には送り先を渡して起動する。
+
+```console
+$ ln -s "$PWD/extension/sd-viewer-bridge" /path/to/stable-diffusion-webui/extensions/sd-viewer-bridge
+$ ./sd-viewer --dir ~/sd/output --webui-url http://localhost:7860
+```
+
+送り先が届かないときは、WebUI の待ち受けアドレスを確かめる。`--listen` なしの WebUI が
+IPv6 だけで待ち受けている場合、`http://127.0.0.1:7860` では届かず `http://localhost:7860`
+なら届く、といったことが起こる。
+
+画像はファイルの位置で受け渡すため、sd-viewer と WebUI は同じホストで動かす必要がある。
+ブラウザは sd-viewer としか通信しないので、別のホストから見ていても構わない。
 
 ### 待ち受けアドレス
 

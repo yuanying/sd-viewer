@@ -31,6 +31,8 @@ type Options struct {
 	Scanner *scanner.Scanner
 	// Static は埋め込んだ画面。nil なら API だけを提供する。
 	Static fs.FS
+	// WebUI は生成情報の送り先。nil なら送信機能を提供しない。
+	WebUI  Sender
 	Logger *slog.Logger
 }
 
@@ -41,6 +43,7 @@ type Server struct {
 	scan   *scanner.Scanner
 	roots  map[string]string
 	static fs.FS
+	webui  Sender
 	log    *slog.Logger
 	mux    *http.ServeMux
 }
@@ -51,6 +54,8 @@ type Status struct {
 	Roots      []string      `json:"roots"`
 	Scan       scanner.Stats `json:"scan"`
 	Thumbnails int64         `json:"thumbnails"`
+	// WebUI は生成情報を WebUI へ送れるかどうか。
+	WebUI bool `json:"webui"`
 }
 
 // New はハンドラを組み立てる。
@@ -70,6 +75,7 @@ func New(opts Options) *Server {
 		scan:   opts.Scanner,
 		roots:  roots,
 		static: opts.Static,
+		webui:  opts.WebUI,
 		log:    log,
 		mux:    http.NewServeMux(),
 	}
@@ -82,6 +88,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /api/raw/{id}", s.handleRaw)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
+	s.mux.HandleFunc("POST /api/send", s.handleSend)
 	// 未知の API は画面ではなく 404 として扱う。
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -240,6 +247,7 @@ func (s *Server) status(r *http.Request) (Status, error) {
 	if s.thumbs != nil {
 		status.Thumbnails = s.thumbs.Generated()
 	}
+	status.WebUI = s.webui != nil
 	return status, nil
 }
 
