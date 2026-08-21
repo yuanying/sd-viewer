@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/yuanying/sd-viewer/internal/trash"
 )
 
 // Watch はファイルシステムのイベントを監視し、インデックスへ反映し続ける。
@@ -71,6 +73,9 @@ func (s *Scanner) watchTree(dir string) error {
 		if !d.IsDir() {
 			return nil
 		}
+		if s.inTrash(path) {
+			return fs.SkipDir
+		}
 		if err := s.watcher.Add(path); err != nil {
 			s.log.Warn("cannot watch directory", "path", path, "error", err)
 		}
@@ -102,7 +107,7 @@ func (s *Scanner) apply(ctx context.Context, pending map[string]bool) {
 	)
 	for abs := range pending {
 		root, rel, ok := s.locate(abs)
-		if !ok {
+		if !ok || trash.IsTrashPath(rel) {
 			continue
 		}
 		c := change{root: root, rel: rel, abs: abs}

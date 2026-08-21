@@ -496,3 +496,91 @@ func startWatching(t *testing.T, ctx context.Context, s *Scanner) {
 	// 監視が始まるまで待つ。
 	waitFor(t, "監視の開始", s.Watching)
 }
+
+func TestScan_ゴミ箱の中は走査しない(t *testing.T) {
+	// Given: ゴミ箱の中と外にそれぞれ画像がある
+	dir := t.TempDir()
+	writeFile(t, dir, "keep.png", pngBytes(sampleParams))
+	writeFile(t, dir, ".trash/2026-08-13/dropped.png", pngBytes(sampleParams))
+	db := newTestIndex(t)
+	s := newScanner(t, db, dir, nil)
+
+	// When
+	if err := s.Scan(t.Context()); err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	// Then
+	if got := indexedPaths(t, db); !slices.Equal(got, []string{"keep.png"}) {
+		t.Errorf("indexedPaths() = %v, want [keep.png]", got)
+	}
+}
+
+func TestScan_ゴミ箱の中の画像を消したことにしない(t *testing.T) {
+	// Given: ゴミ箱へ入れた 1 枚と、ゴミ箱の外の 1 枚
+	dir := t.TempDir()
+	writeFile(t, dir, "keep.png", pngBytes(sampleParams))
+	writeFile(t, dir, "dropped.png", pngBytes(sampleParams))
+	db := newTestIndex(t)
+	s := newScanner(t, db, dir, nil)
+	ctx := t.Context()
+	if err := s.Scan(ctx); err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	dropped, ok, err := db.State(ctx, "out", "dropped.png")
+	if err != nil || !ok {
+		t.Fatalf("State() = ok %v, err %v", ok, err)
+	}
+	if err := db.Trash(ctx, dropped.ID, ".trash/dropped.png", time.Now()); err != nil {
+		t.Fatalf("Trash() error = %v", err)
+	}
+	if err := os.Rename(filepath.Join(dir, "dropped.png"), writePath(t, dir, ".trash/dropped.png")); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: 停止中の変更を回収するつもりで走査し直す
+	if err := s.Scan(ctx); err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	// Then: ゴミ箱の行は残り、一覧には出ない
+	if got := indexedPaths(t, db); !slices.Equal(got, []string{"keep.png"}) {
+		t.Errorf("indexedPaths() = %v, want [keep.png]", got)
+	}
+	if _, err := db.Get(ctx, dropped.ID); err != nil {
+		t.Errorf("Get() error = %v, ゴミ箱の行が消えている", err)
+	}
+}
+
+func TestWatch_ゴミ箱の中の変化は追いかけない(t *testing.T) {
+	// Given: 監視中のディレクトリ
+	dir := t.TempDir()
+	writeFile(t, dir, "keep.png", pngBytes(sampleParams))
+	db := newTestIndex(t)
+	s := newScanner(t, db, dir, nil)
+	ctx := t.Context()
+	startWatching(t, ctx, s)
+
+	// When: ゴミ箱の中にディレクトリごとファイルが現れる
+	writeFile(t, dir, ".trash/2026-08-13/dropped.png", pngBytes(sampleParams))
+
+	// Then: 見張っている keep.png の更新が反映されるまで待ってから確かめる
+	writeFile(t, dir, "later.png", pngBytes(sampleParams))
+	waitFor(t, "ゴミ箱の外の登録", func() bool {
+		return slices.Contains(indexedPaths(t, db), "later.png")
+	})
+	if got := indexedPaths(t, db); !slices.Equal(got, []string{"keep.png", "later.png"}) {
+		t.Errorf("indexedPaths() = %v, ゴミ箱の中まで登録している", got)
+	}
+}
+
+// writePath は書き込み先のディレクトリを用意して絶対パスを返す。
+func writePath(t *testing.T, dir, rel string) string {
+	t.Helper()
+	full := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
