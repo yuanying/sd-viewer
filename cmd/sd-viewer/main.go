@@ -22,6 +22,7 @@ import (
 	"github.com/yuanying/sd-viewer/internal/server"
 	"github.com/yuanying/sd-viewer/internal/server/webui"
 	"github.com/yuanying/sd-viewer/internal/thumb"
+	"github.com/yuanying/sd-viewer/internal/trash"
 )
 
 // config は起動時の設定。
@@ -133,6 +134,22 @@ func run() error {
 		log.Info("WebUI へ送信できます", "url", client.URL())
 	}
 
+	// ゴミ箱はルート名から実ディレクトリを引く。
+	rootDirs := make(map[string]string, len(roots))
+	for _, r := range roots {
+		rootDirs[r.Name] = r.Path
+	}
+	bin := trash.New(trash.Options{
+		DB:    db,
+		Roots: rootDirs,
+		OnPurged: func(id int64) {
+			if err := thumbs.Remove(id); err != nil {
+				log.Debug("cannot remove thumbnail", "id", id, "error", err)
+			}
+		},
+		Logger: log,
+	})
+
 	static := webui.FS()
 	if static == nil {
 		log.Warn("web assets are not built; serving API only (run: make build)")
@@ -144,6 +161,7 @@ func run() error {
 		Scanner: sc,
 		Static:  static,
 		WebUI:   sender,
+		Trash:   bin,
 		Logger:  log,
 	})
 
