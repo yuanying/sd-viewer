@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS images (
     gen_height    INTEGER NOT NULL DEFAULT 0,
     extras        TEXT    NOT NULL DEFAULT '',
     raw           TEXT    NOT NULL DEFAULT '',
+    -- ゴミ箱へ入れた日時。0 ならゴミ箱の外にある。
+    trashed_at    INTEGER NOT NULL DEFAULT 0,
+    -- ゴミ箱へ入れる前のパス。戻し先として使う。
+    orig_path     TEXT    NOT NULL DEFAULT '',
     UNIQUE (root, path)
 );
 
