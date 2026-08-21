@@ -35,6 +35,10 @@ export interface Image {
   negative_tags?: string[];
   extras?: Record<string, string>;
   raw?: string;
+  /** ゴミ箱へ入れた日時。ゴミ箱の中の画像だけが持つ。 */
+  trashed_at?: string;
+  /** ゴミ箱へ入れる前のパス。 */
+  orig_path?: string;
 }
 
 export interface SearchResult {
@@ -61,6 +65,24 @@ export interface TagCount {
   count: number;
 }
 
+/** ルート 1 つ分のゴミ箱の件数。 */
+export interface TrashCount {
+  root: string;
+  count: number;
+}
+
+/** 処理できなかった画像 1 件と、その理由。 */
+export interface TrashFailure {
+  id: number;
+  reason: string;
+}
+
+/** ゴミ箱をまとめて操作した結果。 */
+export interface TrashResult {
+  done: number;
+  failed?: TrashFailure[];
+}
+
 export interface Status {
   total: number;
   roots: string[];
@@ -74,6 +96,8 @@ export interface Status {
   thumbnails: number;
   /** WebUI へ生成情報を送れるかどうか。--webui-url を指定すると立つ。 */
   webui: boolean;
+  /** ルートごとのゴミ箱の件数。 */
+  trash: TrashCount[];
 }
 
 /** 生成情報の送り先となる WebUI のタブ。 */

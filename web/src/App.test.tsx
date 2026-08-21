@@ -56,7 +56,33 @@ const status: Status = {
   scan: { scanning: false, walked: 3, indexed: 3, removed: 0, failed: 0 },
   thumbnails: 3,
   webui: true,
+  trash: [],
 };
+
+/** live は一覧に出ている画像。ゴミ箱の出し入れで中身が動く。 */
+let live: Image[] = [];
+
+/** binned はゴミ箱の中の画像。 */
+let binned: Image[] = [];
+
+/** currentStatus はゴミ箱の件数まで写した、今の状態を返す。 */
+function currentStatus(): Status {
+  const counts = new Map<string, number>();
+  for (const img of binned) {
+    counts.set(img.root, (counts.get(img.root) ?? 0) + 1);
+  }
+  return {
+    ...status,
+    total: live.length,
+    webui,
+    trash: [...counts].map(([root, count]) => ({ root, count })),
+  };
+}
+
+/** takeIDs は本文で指定された ID を取り出す。 */
+function takeIDs(init?: RequestInit): number[] {
+  return (JSON.parse(String(init?.body ?? "{}")) as { ids?: number[] }).ids ?? [];
+}
 
 /** webui は送信先の設定有無を切り替える。 */
 let webui = true;
@@ -71,6 +97,42 @@ function stubFetch() {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push(url);
+
+      const respondJSON = (body: unknown) =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+
+      if (url === "/api/trash" && init?.method === "POST") {
+        const ids = takeIDs(init);
+        binned = [...binned, ...live.filter((img) => ids.includes(img.id))];
+        live = live.filter((img) => !ids.includes(img.id));
+        return respondJSON({ done: ids.length });
+      }
+      if (url === "/api/trash/restore") {
+        const ids = takeIDs(init);
+        live = [...live, ...binned.filter((img) => ids.includes(img.id))];
+        binned = binned.filter((img) => !ids.includes(img.id));
+        return respondJSON({ done: ids.length });
+      }
+      if (url === "/api/trash/purge") {
+        const ids = takeIDs(init);
+        binned = binned.filter((img) => !ids.includes(img.id));
+        return respondJSON({ done: ids.length });
+      }
+      if (url === "/api/trash/empty") {
+        const root = (JSON.parse(String(init?.body ?? "{}")) as { root?: string }).root ?? "";
+        const done = binned.filter((img) => root === "" || img.root === root).length;
+        binned = binned.filter((img) => root !== "" && img.root !== root);
+        return respondJSON({ done });
+      }
+      if (url.startsWith("/api/trash")) {
+        const params = new URLSearchParams(url.split("?")[1] ?? "");
+        const root = params.get("root");
+        const images = root ? binned.filter((img) => img.root === root) : binned;
+        return respondJSON({ total: images.length, images } satisfies SearchResult);
+      }
 
       if (url === "/api/send") {
         sent.push({ url, body: JSON.parse(String(init?.body ?? "{}")) });
@@ -92,7 +154,7 @@ function stubFetch() {
       }
       if (url.startsWith("/api/images")) {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
-        const all = [image(1), image(2), image(3, { model: "modelB" })];
+        const all = live;
         const models = params.getAll("model");
         const images = models.length === 0 ? all : all.filter((i) => models.includes(i.model));
         return respond({ total: images.length, images } satisfies SearchResult);
@@ -104,7 +166,7 @@ function stubFetch() {
         return respond([{ tag: "smile", count: 2 }] satisfies TagCount[]);
       }
       if (url.startsWith("/api/status")) {
-        return respond({ ...status, webui });
+        return respond(currentStatus());
       }
       return new Response("not found", { status: 404 });
     }),
@@ -116,7 +178,7 @@ class StubEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
   constructor() {
     queueMicrotask(() => {
-      this.onmessage?.({ data: JSON.stringify({ ...status, webui }) } as MessageEvent);
+      this.onmessage?.({ data: JSON.stringify(currentStatus()) } as MessageEvent);
     });
   }
   close() {}
@@ -126,6 +188,8 @@ beforeEach(() => {
   requests = [];
   sent = [];
   webui = true;
+  live = [image(1), image(2), image(3, { model: "modelB" })];
+  binned = [];
   window.history.replaceState(null, "", "/");
   stubFetch();
   vi.stubGlobal("EventSource", StubEventSource);
@@ -240,5 +304,152 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
     expect(window.location.search).toBe("");
+  });
+});
+
+describe("ゴミ箱", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** boxes は選択用のチェックボックスを返す。 */
+  const boxes = () => screen.getAllByRole("checkbox", { name: /を選択$/ });
+
+  /** openTrash はゴミ箱ビューへ切り替える。 */
+  async function openTrash(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /^ゴミ箱/ }));
+    return screen.findByRole("region", { name: "ゴミ箱" });
+  }
+
+  it("選んだ画像をゴミ箱へ入れると一覧から消える", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    expect(screen.getByText("1 件選択中")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    expect(screen.queryByText("1 件選択中")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^ゴミ箱/ }).textContent).toContain("1"),
+    );
+  });
+
+  it("Shift を押しながら選ぶと範囲をまとめて選べる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    await user.keyboard("{Shift>}");
+    await user.click(boxes()[2]);
+    await user.keyboard("{/Shift}");
+
+    expect(screen.getByText("3 件選択中")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(screen.queryAllByRole("button", { name: /0000/ })).toHaveLength(0));
+  });
+
+  it("選択を解除できる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "選択を解除" }));
+
+    expect(screen.queryByText("1 件選択中")).toBeNull();
+  });
+
+  it("詳細を開いた 1 枚をゴミ箱へ入れられる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(grid()[0]);
+    await screen.findByText("00001.png");
+
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+
+    await waitFor(() => expect(screen.queryByText("00001.png")).toBeNull());
+    await waitFor(() => expect(grid()).toHaveLength(2));
+  });
+
+  it("ゴミ箱の中身をルートごとに見せる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+
+    const view = await openTrash(user);
+
+    const section = await within(view).findByRole("group", { name: /out/ });
+    expect(within(section).getByRole("button", { name: /00001\.png を元に戻す/ })).toBeTruthy();
+    expect(within(section).getByRole("button", { name: "空にする" })).toBeTruthy();
+  });
+
+  it("ゴミ箱から元に戻すと一覧へ返ってくる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    const view = await openTrash(user);
+
+    await user.click(await within(view).findByRole("button", { name: /00001\.png を元に戻す/ }));
+
+    await waitFor(() => expect(within(view).queryByRole("group")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "一覧へ戻る" }));
+    await waitFor(() => expect(grid()).toHaveLength(3));
+  });
+
+  it("完全に削除する前に確認する", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    const view = await openTrash(user);
+
+    // 断ったときは消さない。
+    await user.click(await within(view).findByRole("button", { name: /00001\.png を完全に削除/ }));
+    expect(confirm).toHaveBeenCalled();
+    expect(requests.some((url) => url === "/api/trash/purge")).toBe(false);
+
+    // 承知したときだけ消す。
+    confirm.mockReturnValue(true as never);
+    await user.click(within(view).getByRole("button", { name: /00001\.png を完全に削除/ }));
+    await waitFor(() => expect(within(view).queryByRole("group")).toBeNull());
+  });
+
+  it("ルートごとにゴミ箱を空にする", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(boxes()[1]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(grid()).toHaveLength(1));
+    const view = await openTrash(user);
+
+    const section = await within(view).findByRole("group", { name: /out/ });
+    await user.click(within(section).getByRole("button", { name: "空にする" }));
+
+    await waitFor(() => expect(within(view).queryByRole("group")).toBeNull());
+    expect(within(view).getByText("ゴミ箱は空です。")).toBeTruthy();
+  });
+
+  it("ゴミ箱が空ならヘッダのボタンを出さない", async () => {
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    expect(screen.queryByRole("button", { name: /^ゴミ箱/ })).toBeNull();
   });
 });

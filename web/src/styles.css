@@ -278,6 +278,47 @@ button:focus-visible {
   gap: 12px;
 }
 
+/* セルと選択用のチェックボックスを重ねるための枠。 */
+.cell-slot {
+  position: relative;
+  display: flex;
+  border-radius: var(--radius);
+}
+
+.cell-slot > .cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.cell-slot.selected > .cell {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.cell-check {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  padding: 6px;
+  cursor: pointer;
+  /* 選ばれていないうちは控えめに出す。 */
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.cell-check input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.cell-slot:hover .cell-check,
+.cell-slot:focus-within .cell-check,
+.cell-slot.selected .cell-check {
+  opacity: 1;
+}
+
 .cell {
   display: flex;
   flex-direction: column;
@@ -322,6 +363,67 @@ button:focus-visible {
 }
 
 .error {
+  color: var(--danger);
+}
+
+/* ---------- 選択 ---------- */
+
+.selection-bar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- ゴミ箱 ---------- */
+
+.app-trash {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.trash-group {
+  margin-bottom: 28px;
+}
+
+.trash-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.trash-cell {
+  cursor: default;
+}
+
+.trash-cell:hover {
+  border-color: var(--border);
+}
+
+.trash-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.trash-actions .action {
+  flex: 1;
+}
+
+.action.danger:hover {
+  border-color: var(--danger);
   color: var(--danger);
 }
 

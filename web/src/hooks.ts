@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchFacets, searchImages, subscribeStatus } from "./api";
+import { fetchFacets, fetchStatus, fetchTrash, searchImages, subscribeStatus } from "./api";
 import { emptyFilters, filtersToSearch, searchToFilters, type Filters } from "./filters";
 import type { FacetSet, Image, Status } from "./types";
 
@@ -129,11 +129,140 @@ export function useFacets(filters: Filters): FacetSet | null {
   return facets;
 }
 
+export interface StatusFeed {
+  status: Status | null;
+  /** refresh は購読の次の通知を待たずに状態を取り直す。 */
+  refresh: () => void;
+}
+
 /** useStatus はインデックスの状態を購読する。 */
-export function useStatus(): Status | null {
+export function useStatus(): StatusFeed {
   const [status, setStatus] = useState<Status | null>(null);
   useEffect(() => subscribeStatus(setStatus), []);
-  return status;
+
+  const refresh = useCallback(() => {
+    fetchStatus()
+      .then(setStatus)
+      .catch(() => {
+        // 次の通知で追いつくため、取れなくても黙って諦める。
+      });
+  }, []);
+
+  return { status, refresh };
+}
+
+export interface TrashList {
+  images: Image[];
+  total: number;
+  loading: boolean;
+  error: string | null;
+  hasMore: boolean;
+  loadMore: () => void;
+  reload: () => void;
+}
+
+/** useTrash はゴミ箱の中身を読み込む。enabled が偽の間は何もしない。 */
+export function useTrash(enabled: boolean): TrashList {
+  const [images, setImages] = useState<Image[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    fetchTrash(0, pageSize, controller.signal)
+      .then((res) => {
+        setImages(res.images);
+        setTotal(res.total);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(errorMessage(err));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [enabled, reloadKey]);
+
+  const loadMore = useCallback(() => {
+    if (loading || images.length >= total) {
+      return;
+    }
+    setLoading(true);
+    fetchTrash(images.length, pageSize)
+      .then((res) => {
+        setImages((prev) => mergeImages(prev, res.images));
+        setTotal(res.total);
+      })
+      .catch((err: unknown) => setError(errorMessage(err)))
+      .finally(() => setLoading(false));
+  }, [images.length, total, loading]);
+
+  const reload = useCallback(() => setReloadKey((n) => n + 1), []);
+
+  return { images, total, loading, error, hasMore: images.length < total, loadMore, reload };
+}
+
+export interface Selection {
+  /** ids は選ばれている画像。 */
+  ids: Set<number>;
+  /** toggle は 1 件の選択を切り替える。shift のときは直前の起点からの範囲を選ぶ。 */
+  toggle: (index: number, shiftKey: boolean) => void;
+  clear: () => void;
+}
+
+/** useSelection はグリッドの複数選択を預かる。 */
+export function useSelection(images: Image[]): Selection {
+  const [ids, setIDs] = useState<Set<number>>(() => new Set());
+  // 範囲選択の起点。まだ何も触っていなければ null。
+  const anchor = useRef<number | null>(null);
+
+  const toggle = useCallback(
+    (index: number, shiftKey: boolean) => {
+      setIDs((prev) => {
+        const next = new Set(prev);
+        const from = anchor.current;
+        if (shiftKey && from !== null) {
+          for (let i = Math.min(from, index); i <= Math.max(from, index); i++) {
+            const image = images[i];
+            if (image) {
+              next.add(image.id);
+            }
+          }
+          return next;
+        }
+        const image = images[index];
+        anchor.current = index;
+        if (!image) {
+          return next;
+        }
+        if (next.has(image.id)) {
+          next.delete(image.id);
+        } else {
+          next.add(image.id);
+        }
+        return next;
+      });
+    },
+    [images],
+  );
+
+  const clear = useCallback(() => {
+    anchor.current = null;
+    setIDs(new Set());
+  }, []);
+
+  return { ids, toggle, clear };
 }
 
 /** useDebounced は入力が落ち着くまで値の反映を遅らせる。 */
