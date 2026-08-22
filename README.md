@@ -13,6 +13,7 @@ PNG に埋め込まれた生成パラメータを解析してインデックス�
 - **自動追従** — ファイルシステムイベントを監視し、画像の追加・移動・削除をリアルタイムにインデックスへ反映
 - **WebUI へ送る** — 表示中の生成情報を WebUI の txt2img / img2img の入力欄へそのまま流し込む（別途 [拡張](extension/sd-viewer-bridge/) が要る）
 - **ゴミ箱** — 要らない画像をまとめて退避し、あとで元に戻すか完全に削除するかを決められる。ゴミ箱はルートごと
+- **設定ファイル** — 監視対象や待ち受けアドレスを `~/.config/sd-viewer/config.toml` に書いておける
 - **単一バイナリ** — フロントエンドを埋め込んだ 1 ファイルで動作
 
 ## ビルド
@@ -39,17 +40,50 @@ $ ./sd-viewer --dir /path/to/stable-diffusion-webui/output
 $ ./sd-viewer --dir ~/sd/output --dir /mnt/nas/sd-archive
 ```
 
+毎回同じ指定をするなら、設定ファイルに書いておくと引数なしで起動できる。
+
+### 設定ファイル
+
+`~/.config/sd-viewer/config.toml`（`XDG_CONFIG_HOME` があればその下）に置く。
+すべての項目を省略でき、書いたものだけが既定を上書きする。
+
+```toml
+addr = ":8189"
+webui-url = "http://localhost:7860"
+
+# 監視する出力ディレクトリ。並べた数だけルートになる。
+[[dir]]
+name = "forge"                       # 省略するとディレクトリ名（この例では output）
+path = "~/sd/stable-diffusion-webui/output"
+
+[[dir]]
+path = "/mnt/nas/sd-archive"
+```
+
+`name` を付けておくと、ディレクトリを引っ越しても検索条件の意味が変わらない。
+省略した場合はディレクトリ名を使い、重なるときは `images`, `images-2` のように連番で分ける。
+
+置き場所を変えたい場合は `--config` で渡す。
+
+```console
+$ ./sd-viewer --config /etc/sd-viewer.toml
+```
+
 ### 主なオプション
 
-| オプション | 既定値 | 説明 |
-| --- | --- | --- |
-| `--dir` | （必須） | 監視対象の出力ディレクトリ。複数指定可 |
-| `--addr` | `:8080` | 待ち受けアドレス |
-| `--webui-url` | （なし） | 生成情報の送り先となる WebUI の URL。指定すると送信ボタンが出る |
-| `--data-dir` | `~/.cache/sd-viewer` | インデックス DB とサムネイルの保存先 |
-| `--thumb-size` | `512` | サムネイルの長辺ピクセル数 |
-| `--no-watch` | `false` | ファイル監視を無効にし、起動時スキャンのみ行う |
-| `-v` | `false` | 詳細なログを出力する |
+コマンドラインは設定ファイルより優先される。実際に渡した項目だけが上書きされるので、
+`--addr` だけを渡しても設定ファイルの他の項目はそのまま残る。
+
+| オプション | 設定ファイルのキー | 既定値 | 説明 |
+| --- | --- | --- | --- |
+| `--dir` | `[[dir]]` の `path` | （必須） | 監視対象の出力ディレクトリ。複数指定可。渡すと設定ファイルの `dir` を置き換える |
+| `--addr` | `addr` | `:8080` | 待ち受けアドレス |
+| `--webui-url` | `webui-url` | （なし） | 生成情報の送り先となる WebUI の URL。指定すると送信ボタンが出る |
+| `--data-dir` | `data-dir` | `~/.cache/sd-viewer` | インデックス DB とサムネイルの保存先 |
+| `--thumb-size` | `thumb-size` | `512` | サムネイルの長辺ピクセル数 |
+| `--no-watch` | `no-watch` | `false` | ファイル監視を無効にし、起動時スキャンのみ行う |
+| `-v` | `verbose` | `false` | 詳細なログを出力する |
+| `--config` | — | `~/.config/sd-viewer/config.toml` | 設定ファイルの位置 |
 
 初回起動時に全画像を走査してインデックスとサムネイルを作る。手元の環境では 3,500 枚で 45 秒ほど、インデックスが 21MB、サムネイルが 109MB だった。2 回目以降は更新のあったファイルだけを読み直す。
 
@@ -65,6 +99,8 @@ sd-viewer には送り先を渡して起動する。
 $ ln -s "$PWD/extension/sd-viewer-bridge" /path/to/stable-diffusion-webui/extensions/sd-viewer-bridge
 $ ./sd-viewer --dir ~/sd/output --webui-url http://localhost:7860
 ```
+
+設定ファイルに書く場合は `webui-url` を使う。
 
 送り先が届かないときは、WebUI の待ち受けアドレスを確かめる。`--listen` なしの WebUI が
 IPv6 だけで待ち受けている場合、`http://127.0.0.1:7860` では届かず `http://localhost:7860`
