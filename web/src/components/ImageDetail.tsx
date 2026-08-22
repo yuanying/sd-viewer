@@ -14,10 +14,21 @@ interface Props {
   onNext: () => void;
   /** WebUI へ送れるかどうか。送れないときは送信ボタンを出さない。 */
   canSend: boolean;
+  /** onTrash は開いている 1 枚をゴミ箱へ入れる。 */
+  onTrash: (id: number) => void;
 }
 
 /** ImageDetail は 1 枚の生成情報を並べ、そこから絞り込めるようにする。 */
-export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext, canSend }: Props) {
+export function ImageDetail({
+  id,
+  filters,
+  onChange,
+  onClose,
+  onPrev,
+  onNext,
+  canSend,
+  onTrash,
+}: Props) {
   const [image, setImage] = useState<Image | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +90,9 @@ export function ImageDetail({ id, filters, onChange, onClose, onPrev, onNext, ca
         <div className="detail-meta">
           {error && <p className="error">{error}</p>}
           {!image && !error && <p className="notice">読み込み中…</p>}
-          {image && <Meta image={image} narrow={narrow} canSend={canSend} />}
+          {image && (
+            <Meta image={image} narrow={narrow} canSend={canSend} onTrash={onTrash} />
+          )}
         </div>
       </div>
     </div>
@@ -90,10 +103,12 @@ function Meta({
   image,
   narrow,
   canSend,
+  onTrash,
 }: {
   image: Image;
   narrow: (key: FacetKey, value: string) => void;
   canSend: boolean;
+  onTrash: (id: number) => void;
 }) {
   return (
     <>
@@ -102,7 +117,7 @@ function Meta({
         {image.root} / {image.dir}
       </p>
 
-      <Actions image={image} canSend={canSend} />
+      <Actions image={image} canSend={canSend} onTrash={onTrash} />
 
       <dl className="params">
         <Row label="生成日時">{new Date(image.created_at).toLocaleString()}</Row>
@@ -225,7 +240,15 @@ function Prompt({ title, text }: { title: string; text: string }) {
 }
 
 /** Actions は 1 枚に対してできることを、詳細の先頭にまとめて並べる。 */
-function Actions({ image, canSend }: { image: Image; canSend: boolean }) {
+function Actions({
+  image,
+  canSend,
+  onTrash,
+}: {
+  image: Image;
+  canSend: boolean;
+  onTrash: (id: number) => void;
+}) {
   const [notice, setNotice] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -267,6 +290,9 @@ function Actions({ image, canSend }: { image: Image; canSend: boolean }) {
           生成情報をコピー
         </button>
       )}
+      <button type="button" className="action danger" onClick={() => onTrash(image.id)}>
+        ゴミ箱へ移動
+      </button>
       {notice && (
         <span className={failed ? "actions-notice failed" : "actions-notice"}>{notice}</span>
       )}

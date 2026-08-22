@@ -11,7 +11,34 @@ import (
 // imageColumns は一覧・詳細で共通して読み出す列。
 const imageColumns = `id, root, path, dir, name, size, mtime, width, height, created_at,
 	has_params, prompt, negative, model, model_hash, sampler, schedule_type, steps,
-	cfg_scale, seed, denoising, version, gen_width, gen_height`
+	cfg_scale, seed, denoising, version, gen_width, gen_height, trashed_at, orig_path`
+
+// imageTimes は SQLite が整数で持つ日時の受け皿。
+type imageTimes struct {
+	mtime   int64
+	created int64
+	trashed int64
+}
+
+// apply は読み出した整数を Image の日時へ移す。
+func (t imageTimes) apply(img *Image) {
+	img.ModTime = time.Unix(0, t.mtime).UTC()
+	img.CreatedAt = time.Unix(0, t.created).UTC()
+	if t.trashed > 0 {
+		img.TrashedAt = time.Unix(0, t.trashed).UTC()
+	}
+}
+
+// scanTargets は imageColumns の並びに対応した Scan の引数を返す。
+func scanTargets(img *Image, times *imageTimes) []any {
+	return []any{
+		&img.ID, &img.Root, &img.Path, &img.Dir, &img.Name, &img.Size, &times.mtime,
+		&img.Width, &img.Height, &times.created, &img.HasParams, &img.Prompt, &img.Negative,
+		&img.Model, &img.ModelHash, &img.Sampler, &img.ScheduleType, &img.Steps,
+		&img.CFGScale, &img.Seed, &img.Denoising, &img.Version, &img.GenWidth, &img.GenHeight,
+		&times.trashed, &img.OrigPath,
+	}
+}
 
 // SortOrder は検索結果の並び順。
 type SortOrder string
@@ -42,11 +69,13 @@ type Query struct {
 	Roots       []string
 	Tags        []string
 	ExcludeTags []string
-	From        time.Time
-	To          time.Time
-	Sort        SortOrder
-	Limit       int
-	Offset      int
+	// Trashed が真ならゴミ箱の中だけを、偽ならゴミ箱の外だけを対象とする。
+	Trashed bool
+	From    time.Time
+	To      time.Time
+	Sort    SortOrder
+	Limit   int
+	Offset  int
 }
 
 // SearchResult は検索結果と、条件に一致した総件数を表す。
@@ -106,7 +135,7 @@ func (d *DB) Search(ctx context.Context, q Query) (*SearchResult, error) {
 	if limit <= 0 {
 		limit = -1
 	}
-	query := `SELECT ` + imageColumns + ` FROM images` + where + ` ORDER BY ` + orderBy(q.Sort) + ` LIMIT ? OFFSET ?`
+	query := `SELECT ` + imageColumns + ` FROM images` + where + ` ORDER BY ` + orderBy(q) + ` LIMIT ? OFFSET ?`
 	rows, err := d.db.QueryContext(ctx, query, append(append([]any{}, args...), limit, q.Offset)...)
 	if err != nil {
 		return nil, fmt.Errorf("index: search images: %w", err)
@@ -115,21 +144,13 @@ func (d *DB) Search(ctx context.Context, q Query) (*SearchResult, error) {
 
 	for rows.Next() {
 		var (
-			img     Image
-			mtime   int64
-			created int64
+			img   Image
+			times imageTimes
 		)
-		err := rows.Scan(
-			&img.ID, &img.Root, &img.Path, &img.Dir, &img.Name, &img.Size, &mtime,
-			&img.Width, &img.Height, &created, &img.HasParams, &img.Prompt, &img.Negative,
-			&img.Model, &img.ModelHash, &img.Sampler, &img.ScheduleType, &img.Steps,
-			&img.CFGScale, &img.Seed, &img.Denoising, &img.Version, &img.GenWidth, &img.GenHeight,
-		)
-		if err != nil {
+		if err := rows.Scan(scanTargets(&img, &times)...); err != nil {
 			return nil, fmt.Errorf("index: scan image: %w", err)
 		}
-		img.ModTime = time.Unix(0, mtime).UTC()
-		img.CreatedAt = time.Unix(0, created).UTC()
+		times.apply(&img)
 		res.Images = append(res.Images, &img)
 	}
 	if err := rows.Err(); err != nil {
@@ -141,8 +162,12 @@ func (d *DB) Search(ctx context.Context, q Query) (*SearchResult, error) {
 	return res, nil
 }
 
-func orderBy(sort SortOrder) string {
-	switch sort {
+func orderBy(q Query) string {
+	// ゴミ箱は捨てた順に見たいため、並び順の指定は使わない。
+	if q.Trashed {
+		return `trashed_at DESC, id DESC`
+	}
+	switch q.Sort {
 	case SortOldest:
 		return `created_at ASC, id ASC`
 	case SortName:
@@ -171,7 +196,7 @@ func (d *DB) Facets(ctx context.Context, q Query) (*FacetSet, error) {
 	for _, c := range columns {
 		where, args := buildWhere(q, c.skip)
 		query := `SELECT ` + c.expr + ` AS value, COUNT(*) AS n FROM images` + where +
-			nonEmpty(where) + `value <> '' GROUP BY value ORDER BY n DESC, value ASC LIMIT ?`
+			` AND value <> '' GROUP BY value ORDER BY n DESC, value ASC LIMIT ?`
 		values, err := d.facetValues(ctx, query, append(append([]any{}, args...), maxFacetValues)...)
 		if err != nil {
 			return nil, err
@@ -182,7 +207,7 @@ func (d *DB) Facets(ctx context.Context, q Query) (*FacetSet, error) {
 	where, args := buildWhere(q, facetLora)
 	query := `SELECT image_loras.name AS value, COUNT(*) AS n
 	          FROM image_loras JOIN images ON images.id = image_loras.image_id` + where +
-		nonEmpty(where) + `value <> '' GROUP BY value ORDER BY n DESC, value ASC LIMIT ?`
+		` AND value <> '' GROUP BY value ORDER BY n DESC, value ASC LIMIT ?`
 	loras, err := d.facetValues(ctx, query, append(append([]any{}, args...), maxFacetValues)...)
 	if err != nil {
 		return nil, err
@@ -190,14 +215,6 @@ func (d *DB) Facets(ctx context.Context, q Query) (*FacetSet, error) {
 	set.Loras = loras
 
 	return set, nil
-}
-
-// nonEmpty は WHERE 句の有無に応じて条件を継ぎ足すための接続詞を返す。
-func nonEmpty(where string) string {
-	if where == "" {
-		return ` WHERE `
-	}
-	return ` AND `
 }
 
 func (d *DB) facetValues(ctx context.Context, query string, args ...any) ([]FacetValue, error) {
@@ -229,6 +246,7 @@ func (d *DB) TagSuggest(ctx context.Context, prefix string, limit int) ([]TagCou
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT tag, COUNT(*) AS n FROM image_tags
+		JOIN images ON images.id = image_tags.image_id AND images.trashed_at = 0
 		WHERE kind = 0 AND tag LIKE ? ESCAPE '\'
 		GROUP BY tag
 		ORDER BY (CASE WHEN tag LIKE ? ESCAPE '\' THEN 0 ELSE 1 END), n DESC, tag ASC
@@ -252,11 +270,14 @@ func (d *DB) TagSuggest(ctx context.Context, prefix string, limit int) ([]TagCou
 
 // buildWhere は検索条件から WHERE 句を組み立てる。
 // skip に指定したファセットの条件は含めない。
+// ゴミ箱の内外を必ず絞るため、戻り値の WHERE 句が空になることはない。
 func buildWhere(q Query, skip facet) (string, []any) {
-	var (
-		conds []string
-		args  []any
-	)
+	// ゴミ箱の中と外は混ぜない。条件を書かないと消したものが一覧へ戻ってしまう。
+	conds := []string{`images.trashed_at = 0`}
+	if q.Trashed {
+		conds[0] = `images.trashed_at > 0`
+	}
+	var args []any
 
 	if match := ftsMatch(q.Text); match != "" {
 		conds = append(conds, `images.id IN (SELECT rowid FROM images_fts WHERE images_fts MATCH ?)`)
@@ -315,9 +336,6 @@ func buildWhere(q Query, skip facet) (string, []any) {
 		args = append(args, q.To.UnixNano())
 	}
 
-	if len(conds) == 0 {
-		return "", nil
-	}
 	return ` WHERE ` + strings.Join(conds, ` AND `), args
 }
 

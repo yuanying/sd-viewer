@@ -60,6 +60,10 @@ type Image struct {
 	NegativeTags []string          `json:"negative_tags,omitempty"`
 	Extras       map[string]string `json:"extras,omitempty"`
 	Raw          string            `json:"raw,omitempty"`
+	// TrashedAt はゴミ箱へ入れた日時。ゼロ値ならゴミ箱の外にある。
+	TrashedAt time.Time `json:"trashed_at,omitzero"`
+	// OrigPath はゴミ箱へ入れる前のパス。ゴミ箱の中の画像だけが持つ。
+	OrigPath string `json:"orig_path,omitempty"`
 }
 
 // FileState は差分スキャンのためにインデックスが覚えているファイルの状態。
@@ -92,7 +96,49 @@ func Open(dbPath string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("index: apply schema: %w", err)
 	}
+	if err := migrate(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
 	return &DB{db: sqlDB}, nil
+}
+
+// addedColumns は後から images へ足した列。定義の順に並べる。
+var addedColumns = []struct{ name, definition string }{
+	{"trashed_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"orig_path", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// migrate は古いインデックスに足りない列を継ぎ足す。
+// 作り直しは要らないため、起動のたびに黙って通り抜ける。
+func migrate(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('images')`)
+	if err != nil {
+		return fmt.Errorf("index: inspect schema: %w", err)
+	}
+	defer rows.Close()
+
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("index: scan column name: %w", err)
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, c := range addedColumns {
+		if have[c.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE images ADD COLUMN ` + c.name + ` ` + c.definition); err != nil {
+			return fmt.Errorf("index: add column %s: %w", c.name, err)
+		}
+	}
+	return nil
 }
 
 // Close は接続を閉じる。
@@ -203,7 +249,8 @@ func (d *DB) Delete(ctx context.Context, root, imgPath string) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
-	_, err := d.db.ExecContext(ctx, `DELETE FROM images WHERE root = ? AND path = ?`, root, imgPath)
+	_, err := d.db.ExecContext(ctx,
+		`DELETE FROM images WHERE root = ? AND path = ? AND trashed_at = 0`, root, imgPath)
 	if err != nil {
 		return fmt.Errorf("index: delete %s: %w", imgPath, err)
 	}
@@ -216,7 +263,7 @@ func (d *DB) DeleteUnder(ctx context.Context, root, dir string) error {
 	defer d.writeMu.Unlock()
 
 	_, err := d.db.ExecContext(ctx,
-		`DELETE FROM images WHERE root = ? AND (dir = ? OR dir LIKE ? ESCAPE '\')`,
+		`DELETE FROM images WHERE root = ? AND trashed_at = 0 AND (dir = ? OR dir LIKE ? ESCAPE '\')`,
 		root, dir, escapeLike(dir)+`/%`)
 	if err != nil {
 		return fmt.Errorf("index: delete under %s: %w", dir, err)
@@ -232,7 +279,7 @@ func (d *DB) Move(ctx context.Context, root, oldPath, newPath string) error {
 	defer d.writeMu.Unlock()
 
 	res, err := d.db.ExecContext(ctx,
-		`UPDATE images SET path = ?, dir = ?, name = ? WHERE root = ? AND path = ?`,
+		`UPDATE images SET path = ?, dir = ?, name = ? WHERE root = ? AND path = ? AND trashed_at = 0`,
 		newPath, trimSlash(dir), name, root, oldPath)
 	if err != nil {
 		return fmt.Errorf("index: move %s: %w", oldPath, err)
@@ -249,26 +296,18 @@ func (d *DB) Get(ctx context.Context, id int64) (*Image, error) {
 		`SELECT `+imageColumns+`, extras, raw FROM images WHERE id = ?`, id)
 
 	var (
-		img     Image
-		extras  string
-		mtime   int64
-		created int64
+		img    Image
+		extras string
+		times  imageTimes
 	)
-	err := row.Scan(
-		&img.ID, &img.Root, &img.Path, &img.Dir, &img.Name, &img.Size, &mtime,
-		&img.Width, &img.Height, &created, &img.HasParams, &img.Prompt, &img.Negative,
-		&img.Model, &img.ModelHash, &img.Sampler, &img.ScheduleType, &img.Steps,
-		&img.CFGScale, &img.Seed, &img.Denoising, &img.Version, &img.GenWidth, &img.GenHeight,
-		&extras, &img.Raw,
-	)
+	err := row.Scan(append(scanTargets(&img, &times), &extras, &img.Raw)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("index: get image %d: %w", id, err)
 	}
-	img.ModTime = time.Unix(0, mtime).UTC()
-	img.CreatedAt = time.Unix(0, created).UTC()
+	times.apply(&img)
 
 	if extras != "" {
 		if err := json.Unmarshal([]byte(extras), &img.Extras); err != nil {
@@ -287,7 +326,7 @@ func (d *DB) Get(ctx context.Context, id int64) (*Image, error) {
 // States はルート配下の既知ファイルの状態を、ルート相対パスをキーに返す。
 func (d *DB) States(ctx context.Context, root string) (map[string]FileState, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT id, path, size, mtime FROM images WHERE root = ?`, root)
+		`SELECT id, path, size, mtime FROM images WHERE root = ? AND trashed_at = 0`, root)
 	if err != nil {
 		return nil, fmt.Errorf("index: list states: %w", err)
 	}
@@ -316,7 +355,7 @@ func (d *DB) State(ctx context.Context, root, imgPath string) (FileState, bool, 
 		mtime int64
 	)
 	err := d.db.QueryRowContext(ctx,
-		`SELECT id, size, mtime FROM images WHERE root = ? AND path = ?`, root, imgPath).
+		`SELECT id, size, mtime FROM images WHERE root = ? AND path = ? AND trashed_at = 0`, root, imgPath).
 		Scan(&state.ID, &state.Size, &mtime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return FileState{}, false, nil

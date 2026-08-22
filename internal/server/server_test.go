@@ -24,6 +24,7 @@ import (
 	"github.com/yuanying/sd-viewer/internal/metadata"
 	"github.com/yuanying/sd-viewer/internal/scanner"
 	"github.com/yuanying/sd-viewer/internal/thumb"
+	"github.com/yuanying/sd-viewer/internal/trash"
 )
 
 var fixtureBase = time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
@@ -75,6 +76,11 @@ func newEnv(t *testing.T, static fs.FS) *testEnv {
 		Thumbs: thumbs,
 		Roots:  []scanner.Root{{Name: "out", Path: dir}},
 		Static: static,
+		Trash: trash.New(trash.Options{
+			DB:       db,
+			Roots:    map[string]string{"out": dir},
+			OnPurged: func(id int64) { thumbs.Remove(id) },
+		}),
 	})
 	return env
 }

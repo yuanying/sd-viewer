@@ -19,6 +19,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/yuanying/sd-viewer/internal/index"
 	"github.com/yuanying/sd-viewer/internal/metadata"
+	"github.com/yuanying/sd-viewer/internal/trash"
 )
 
 // Root は監視対象のディレクトリ。Name は検索条件やファセットで使う識別子。
@@ -182,6 +183,10 @@ func (s *Scanner) scanRoot(ctx context.Context, root Root) error {
 			return ctx.Err()
 		}
 		if d.IsDir() {
+			// ゴミ箱の中身はインデックスが状態として持っている。
+			if rel, err := relPath(root, abs); err == nil && trash.IsTrashPath(rel) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !isPNG(abs) {
@@ -306,6 +311,12 @@ func unchanged(state index.FileState, info fs.FileInfo) bool {
 
 func isPNG(p string) bool {
 	return strings.EqualFold(filepath.Ext(p), ".png")
+}
+
+// inTrash は絶対パスがどれかのルートのゴミ箱を指すかを返す。
+func (s *Scanner) inTrash(abs string) bool {
+	_, rel, ok := s.locate(abs)
+	return ok && trash.IsTrashPath(rel)
 }
 
 // relPath は絶対パスをルート相対のスラッシュ区切りへ変換する。

@@ -9,6 +9,10 @@ interface Props {
   hasMore: boolean;
   onLoadMore: () => void;
   onSelect: (image: Image) => void;
+  /** 選ばれている画像の ID。 */
+  selected: Set<number>;
+  /** onToggle は選択の切り替えを伝える。shiftKey なら範囲選択。 */
+  onToggle: (index: number, shiftKey: boolean) => void;
 }
 
 /** ImageGrid はサムネイルを並べ、下端に近づいたら続きを読み込む。 */
@@ -19,6 +23,8 @@ export function ImageGrid({
   hasMore,
   onLoadMore,
   onSelect,
+  selected,
+  onToggle,
 }: Props) {
   const sentinel = useRef<HTMLDivElement>(null);
 
@@ -49,23 +55,37 @@ export function ImageGrid({
   return (
     <>
       <div className="grid">
-        {images.map((image) => (
-          <button
+        {images.map((image, index) => (
+          <div
             key={image.id}
-            type="button"
-            className="cell"
-            onClick={() => onSelect(image)}
-            title={image.path}
+            className={selected.has(image.id) ? "cell-slot selected" : "cell-slot"}
           >
-            <img
-              src={thumbUrl(image.id)}
-              alt={image.name}
-              loading="lazy"
-              decoding="async"
-              style={{ aspectRatio: `${image.width || 1} / ${image.height || 1}` }}
-            />
-            <span className="cell-caption">{image.model || image.name}</span>
-          </button>
+            <label className="cell-check" title="選択する">
+              <input
+                type="checkbox"
+                checked={selected.has(image.id)}
+                aria-label={`${image.name} を選択`}
+                // クリックの Shift はイベントからしか取れない。
+                onClick={(e) => onToggle(index, e.shiftKey)}
+                onChange={() => {}}
+              />
+            </label>
+            <button
+              type="button"
+              className="cell"
+              onClick={() => onSelect(image)}
+              title={image.path}
+            >
+              <img
+                src={thumbUrl(image.id)}
+                alt={image.name}
+                loading="lazy"
+                decoding="async"
+                style={{ aspectRatio: `${image.width || 1} / ${image.height || 1}` }}
+              />
+              <span className="cell-caption">{image.model || image.name}</span>
+            </button>
+          </div>
         ))}
       </div>
       <div ref={sentinel} className="sentinel">

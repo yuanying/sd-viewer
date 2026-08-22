@@ -32,7 +32,9 @@ type Options struct {
 	// Static は埋め込んだ画面。nil なら API だけを提供する。
 	Static fs.FS
 	// WebUI は生成情報の送り先。nil なら送信機能を提供しない。
-	WebUI  Sender
+	WebUI Sender
+	// Trash はゴミ箱。nil ならゴミ箱の操作を提供しない。
+	Trash  Bin
 	Logger *slog.Logger
 }
 
@@ -44,6 +46,7 @@ type Server struct {
 	roots  map[string]string
 	static fs.FS
 	webui  Sender
+	trash  Bin
 	log    *slog.Logger
 	mux    *http.ServeMux
 }
@@ -56,6 +59,8 @@ type Status struct {
 	Thumbnails int64         `json:"thumbnails"`
 	// WebUI は生成情報を WebUI へ送れるかどうか。
 	WebUI bool `json:"webui"`
+	// Trash はルートごとのゴミ箱の件数。
+	Trash []index.TrashCount `json:"trash"`
 }
 
 // New はハンドラを組み立てる。
@@ -76,6 +81,7 @@ func New(opts Options) *Server {
 		roots:  roots,
 		static: opts.Static,
 		webui:  opts.WebUI,
+		trash:  opts.Trash,
 		log:    log,
 		mux:    http.NewServeMux(),
 	}
@@ -89,6 +95,11 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("POST /api/send", s.handleSend)
+	s.mux.HandleFunc("GET /api/trash", s.handleTrashList)
+	s.mux.HandleFunc("POST /api/trash", s.handleTrash)
+	s.mux.HandleFunc("POST /api/trash/restore", s.handleRestore)
+	s.mux.HandleFunc("POST /api/trash/purge", s.handlePurge)
+	s.mux.HandleFunc("POST /api/trash/empty", s.handleEmpty)
 	// 未知の API は画面ではなく 404 として扱う。
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -248,6 +259,15 @@ func (s *Server) status(r *http.Request) (Status, error) {
 		status.Thumbnails = s.thumbs.Generated()
 	}
 	status.WebUI = s.webui != nil
+
+	counts, err := s.db.TrashCounts(r.Context())
+	if err != nil {
+		return Status{}, err
+	}
+	status.Trash = counts
+	if status.Trash == nil {
+		status.Trash = []index.TrashCount{}
+	}
 	return status, nil
 }
 
