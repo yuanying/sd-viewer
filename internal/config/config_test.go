@@ -25,7 +25,7 @@ func write(t *testing.T, body string) string {
 func TestLoad_設定ファイルの値を読む(t *testing.T) {
 	// Given
 	path := write(t, `
-addr = ":8189"
+addr = ":9000"
 webui-url = "http://localhost:7860"
 data-dir = "/var/tmp/sd-viewer"
 thumb-size = 384
@@ -47,8 +47,8 @@ path = "/srv/archive"
 	}
 
 	// Then
-	if cfg.Addr != ":8189" {
-		t.Errorf("Addr = %q, want :8189", cfg.Addr)
+	if cfg.Addr != ":9000" {
+		t.Errorf("Addr = %q, want :9000", cfg.Addr)
 	}
 	if cfg.WebUIURL != "http://localhost:7860" {
 		t.Errorf("WebUIURL = %q", cfg.WebUIURL)
@@ -131,7 +131,7 @@ func TestLoad_壊れた設定ファイルは理由をつけて断る(t *testing.
 
 func TestLoad_知らない項目は綴り違いとして断る(t *testing.T) {
 	// Given: addr の綴り違い
-	path := write(t, `adr = ":8189"`)
+	path := write(t, `adr = ":9000"`)
 
 	// When
 	_, err := Load(path)
@@ -354,7 +354,7 @@ func TestParse_設定ファイルの値で起動できる(t *testing.T) {
 	// Given
 	dirs := tempDirs(t, "output")
 	withConfig(t, `
-addr = ":8189"
+addr = ":9000"
 webui-url = "http://localhost:7860"
 
 [[dir]]
@@ -369,8 +369,8 @@ path = "`+dirs[0]+`"
 	}
 
 	// Then
-	if cfg.Addr != ":8189" {
-		t.Errorf("Addr = %q, want :8189", cfg.Addr)
+	if cfg.Addr != ":9000" {
+		t.Errorf("Addr = %q, want :9000", cfg.Addr)
 	}
 	if cfg.WebUIURL != "http://localhost:7860" {
 		t.Errorf("WebUIURL = %q", cfg.WebUIURL)
@@ -384,7 +384,7 @@ func TestParse_指定したフラグだけが設定ファイルを上書きす�
 	// Given
 	dirs := tempDirs(t, "output")
 	withConfig(t, `
-addr = ":8189"
+addr = ":9000"
 webui-url = "http://localhost:7860"
 thumb-size = 384
 
@@ -438,13 +438,13 @@ func TestParse_設定ファイルがなくてもフラグだけで起動でき�
 	dirs := tempDirs(t, "output")
 
 	// When
-	cfg, err := Parse([]string{"--dir", dirs[0], "--addr", ":8189"})
+	cfg, err := Parse([]string{"--dir", dirs[0], "--addr", ":9000"})
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
 	// Then
-	if cfg.Addr != ":8189" || len(cfg.Dirs) != 1 {
+	if cfg.Addr != ":9000" || len(cfg.Dirs) != 1 {
 		t.Errorf("Parse() = %+v", cfg)
 	}
 }

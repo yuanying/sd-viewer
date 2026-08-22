@@ -48,7 +48,7 @@ $ ./sd-viewer --dir ~/sd/output --dir /mnt/nas/sd-archive
 すべての項目を省略でき、書いたものだけが既定を上書きする。
 
 ```toml
-addr = ":8189"
+addr = ":9000"
 webui-url = "http://localhost:7860"
 
 # 監視する出力ディレクトリ。並べた数だけルートになる。
