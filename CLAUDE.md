@@ -1,19 +1,12 @@
 # CLAUDE.md
 
-## 起動手順
+## 常駐と運用
 
-ユーザーが「起動して」と言ったら、確認を取らずに以下を実行する。
-
-1. `go build -o sd-viewer ./cmd/sd-viewer` でビルドする
-2. 現在の Herdr ペインを**下方向**に分割する（`--cwd` はプロジェクトルート、`--no-focus`）
-3. 新しいペインの名前を `sd-viewer` にする
-4. そのペインで `./sd-viewer` を引数なしで実行する
-5. `listening` のログを待ち、そこに出たアドレスへ疎通確認して結果を報告する
+boucherie では、sd-viewer は dotfiles の `devbox/apps` で `sd-viewer` コンテナとして常駐している。
+コンテナは起動のたびにこのチェックアウトから `go build` し直すので、ソースの変更は
+`docker restart sd-viewer` で反映される。起動・停止・ログの見方など運用の手順は
+dotfiles の `devbox/apps/README.md` を見る。
 
 - 監視するディレクトリ・待ち受けアドレス・WebUI の送り先は、いずれも
   `~/.config/sd-viewer/config.toml` に書いてある。**この環境に固有の値をこのリポジトリへ
   書き足さないこと。** 値を知りたいときは設定ファイルを読む
-- すでに `sd-viewer` という名前のペインが生きている場合は、分割せずそのペインを使い回す
-- 「停止して」と言われたら、そのペインで動いているプロセスを止める（ペイン自体は閉じない）
-
-Herdr の CLI の使い方は `herdr --skill` と `herdr pane` を参照する。
