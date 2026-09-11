@@ -30,6 +30,7 @@ export function emptyFilters(): Filters {
     from: "",
     to: "",
     sort: "newest",
+    fav: false,
   };
 }
 
@@ -53,6 +54,9 @@ export function filtersToSearch(filters: Filters): string {
   if (filters.sort !== "newest") {
     params.set("sort", filters.sort);
   }
+  if (filters.fav) {
+    params.set("fav", "1");
+  }
   return params.toString();
 }
 
@@ -72,6 +76,8 @@ export function searchToFilters(search: string): Filters {
   if (sort && sortOrders.includes(sort)) {
     filters.sort = sort;
   }
+  // サーバと同じく、真と読めるものだけを Fav のみとする。
+  filters.fav = ["1", "true"].includes(params.get("fav") ?? "");
   return filters;
 }
 
@@ -86,7 +92,7 @@ export function toggleFacet(filters: Filters, key: FacetKey, value: string): Fil
 
 /** hasAnyFilter は絞り込みが 1 つでも掛かっているかを返す。 */
 export function hasAnyFilter(filters: Filters): boolean {
-  if (filters.q.trim() !== "" || filters.from !== "" || filters.to !== "") {
+  if (filters.q.trim() !== "" || filters.from !== "" || filters.to !== "" || filters.fav) {
     return true;
   }
   return facetKeys.some((key) => filters[key].length > 0);

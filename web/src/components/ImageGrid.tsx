@@ -13,6 +13,8 @@ interface Props {
   selected: Set<number>;
   /** onToggle は選択の切り替えを伝える。shiftKey なら範囲選択。 */
   onToggle: (index: number, shiftKey: boolean) => void;
+  /** onFav は画像を Fav にするか外すかを伝える。 */
+  onFav: (image: Image, fav: boolean) => void;
 }
 
 /** ImageGrid はサムネイルを並べ、下端に近づいたら続きを読み込む。 */
@@ -25,6 +27,7 @@ export function ImageGrid({
   onSelect,
   selected,
   onToggle,
+  onFav,
 }: Props) {
   const sentinel = useRef<HTMLDivElement>(null);
 
@@ -69,6 +72,18 @@ export function ImageGrid({
                 onClick={(e) => onToggle(index, e.shiftKey)}
                 onChange={() => {}}
               />
+            </label>
+            <label
+              className={image.fav_at ? "cell-fav on" : "cell-fav"}
+              title={image.fav_at ? "Fav から外す" : "Fav に追加"}
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(image.fav_at)}
+                aria-label={`${image.name} を Fav`}
+                onChange={() => onFav(image, !image.fav_at)}
+              />
+              <span aria-hidden="true">★</span>
             </label>
             <button
               type="button"

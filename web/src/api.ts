@@ -1,6 +1,7 @@
 import { filtersToSearch, type Filters } from "./filters";
 import type {
   FacetSet,
+  FavResult,
   Image,
   SearchResult,
   SendTarget,
@@ -91,6 +92,11 @@ export function purgeFromTrash(ids: number[]): Promise<TrashResult> {
 /** emptyTrash は指定したルートのゴミ箱を空にする。取り消せない。 */
 export function emptyTrash(root: string): Promise<TrashResult> {
   return postJSON<TrashResult>("/api/trash/empty", { root });
+}
+
+/** setFav は画像を Fav にする、または Fav から外す。 */
+export function setFav(ids: number[], fav: boolean): Promise<FavResult> {
+  return postJSON<FavResult>(fav ? "/api/fav" : "/api/fav/remove", { ids });
 }
 
 export function thumbUrl(id: number): string {

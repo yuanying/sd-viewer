@@ -45,6 +45,16 @@ describe("filtersToSearch", () => {
       filters: { q: "  ", from: "" },
       want: "",
     },
+    {
+      name: "Fav のみを渡す",
+      filters: { fav: true, root: ["out"] },
+      want: "root=out&fav=1",
+    },
+    {
+      name: "Fav に絞らないときは省く",
+      filters: { fav: false },
+      want: "",
+    },
   ];
 
   for (const tt of tests) {
@@ -86,6 +96,21 @@ describe("searchToFilters", () => {
       search: "?unknown=1&q=x",
       want: { q: "x" },
     },
+    {
+      name: "Fav のみを読み取る",
+      search: "?fav=1",
+      want: { fav: true },
+    },
+    {
+      name: "true も Fav のみとして読む",
+      search: "?fav=true",
+      want: { fav: true },
+    },
+    {
+      name: "解釈できない Fav の値は指定なしに倒す",
+      search: "?fav=0",
+      want: {},
+    },
   ];
 
   for (const tt of tests) {
@@ -104,6 +129,7 @@ describe("searchToFilters", () => {
       exclude_tag: ["watermark"],
       from: "2026-08-01",
       sort: "oldest",
+      fav: true,
     };
     expect(searchToFilters("?" + filtersToSearch(filters))).toEqual(filters);
   });
@@ -135,6 +161,7 @@ describe("hasAnyFilter", () => {
     { name: "検索語があれば true", filters: { q: "x" }, want: true },
     { name: "ファセットを選んでいれば true", filters: { lora: ["a"] }, want: true },
     { name: "日付を指定していれば true", filters: { from: "2026-08-01" }, want: true },
+    { name: "Fav のみに絞っていれば true", filters: { fav: true }, want: true },
     { name: "並び順だけの変更は条件とみなさない", filters: { sort: "oldest" }, want: false },
   ];
 
