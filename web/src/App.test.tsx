@@ -90,6 +90,12 @@ let webui = true;
 /** sent は画面が送った送信要求を覚える。 */
 let sent: { url: string; body: unknown }[] = [];
 
+/** facetResponse は /api/facets の応答。既定は facets。 */
+let facetResponse: unknown = facets;
+
+/** favRequests は画面が送った Fav の付け外しを覚える。 */
+let favRequests: { url: string; ids: number[] }[] = [];
+
 /** stubFetch は API の応答を差し替える。 */
 function stubFetch() {
   vi.stubGlobal(
@@ -103,6 +109,17 @@ function stubFetch() {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+
+      if (url === "/api/fav" || url === "/api/fav/remove") {
+        const ids = takeIDs(init);
+        favRequests.push({ url, ids });
+        const on = url === "/api/fav";
+        const mark = (img: Image): Image =>
+          ids.includes(img.id) ? { ...img, fav_at: on ? "2026-08-21T10:00:00Z" : undefined } : img;
+        live = live.map(mark);
+        binned = binned.map(mark);
+        return respondJSON({ done: ids.length });
+      }
 
       if (url === "/api/trash" && init?.method === "POST") {
         const ids = takeIDs(init);
@@ -150,17 +167,23 @@ function stubFetch() {
 
       if (url.startsWith("/api/images/")) {
         const id = Number(url.slice("/api/images/".length));
-        return respond(image(id, { positive_tags: ["1girl", "smile"], raw: "raw text" }));
+        const found = live.find((img) => img.id === id);
+        return respond({
+          ...image(id),
+          ...found,
+          positive_tags: ["1girl", "smile"],
+          raw: "raw text",
+        });
       }
       if (url.startsWith("/api/images")) {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
-        const all = live;
+        const all = params.get("fav") === "1" ? live.filter((img) => img.fav_at) : live;
         const models = params.getAll("model");
         const images = models.length === 0 ? all : all.filter((i) => models.includes(i.model));
         return respond({ total: images.length, images } satisfies SearchResult);
       }
       if (url.startsWith("/api/facets")) {
-        return respond(facets);
+        return respond(facetResponse);
       }
       if (url.startsWith("/api/tags")) {
         return respond([{ tag: "smile", count: 2 }] satisfies TagCount[]);
@@ -187,6 +210,8 @@ class StubEventSource {
 beforeEach(() => {
   requests = [];
   sent = [];
+  favRequests = [];
+  facetResponse = facets;
   webui = true;
   live = [image(1), image(2), image(3, { model: "modelB" })];
   binned = [];
@@ -292,6 +317,51 @@ describe("App", () => {
 
     expect(screen.queryByRole("button", { name: "txt2img へ送る" })).toBeNull();
     expect(screen.queryByRole("button", { name: "img2img へ送る" })).toBeNull();
+  });
+
+  it("結果が 0 件でファセットが空配列でも落ちずに描画する", async () => {
+    live = [];
+    facetResponse = { models: [], loras: [], samplers: [], sizes: [], dirs: [], roots: [] };
+    render(<App />);
+
+    expect(await screen.findByText("条件に合う画像がありません。")).toBeTruthy();
+    await waitFor(() => expect(requests.some((url) => url.startsWith("/api/facets"))).toBe(true));
+    expect(screen.getByRole("button", { name: /Fav のみ/ })).toBeTruthy();
+  });
+
+  it("ファセットの項目が null でも落ちずに描画する", async () => {
+    facetResponse = { models: null, loras: null, samplers: null, sizes: null, dirs: null, roots: null };
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+    await waitFor(() => expect(requests.some((url) => url.startsWith("/api/facets"))).toBe(true));
+    // 応答を描き終えたあとも一覧が残っている。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3);
+  });
+
+  it("絞り込み中の全件数と解除の操作はヘッダではなくサイドバーに出す", async () => {
+    // ヘッダに現れると並びが押し出され、検索バーが折り返してしまう。
+    window.history.replaceState(null, "", "/?model=modelB");
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(1));
+
+    const header = screen.getByRole("banner");
+    expect(within(header).getByText("1 件")).toBeTruthy();
+    expect(within(header).queryByText(/全 3 件/)).toBeNull();
+    expect(within(header).queryByRole("button", { name: "条件をすべて解除" })).toBeNull();
+
+    const sidebar = screen.getByRole("complementary");
+    await waitFor(() => expect(within(sidebar).getByText(/全 3 件/)).toBeTruthy());
+    expect(within(sidebar).getByRole("button", { name: "条件をすべて解除" })).toBeTruthy();
+  });
+
+  it("絞り込みが無ければ解除の操作を出さない", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+
+    expect(screen.queryByRole("button", { name: "条件をすべて解除" })).toBeNull();
+    expect(screen.queryByText(/全 3 件/)).toBeNull();
   });
 
   it("条件をすべて解除すると元の一覧に戻る", async () => {
@@ -451,5 +521,108 @@ describe("ゴミ箱", () => {
     await waitFor(() => expect(grid()).toHaveLength(3));
 
     expect(screen.queryByRole("button", { name: /^ゴミ箱/ })).toBeNull();
+  });
+});
+
+describe("Fav", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** stars はセルごとの Fav の切り替えを返す。 */
+  const stars = () => screen.getAllByRole("checkbox", { name: /を Fav$/ });
+
+  /** boxes は選択用のチェックボックスを返す。 */
+  const boxes = () => screen.getAllByRole("checkbox", { name: /を選択$/ });
+
+  /** favOnly はヘッダの「Fav のみ表示」の星を返す。 */
+  const favOnly = () => screen.getByRole("button", { name: "Fav のみ表示" });
+
+  it("グリッドの星で Fav にすると Fav のみの表示に出てくる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    expect((stars()[0] as HTMLInputElement).checked).toBe(false);
+
+    await user.click(stars()[0]);
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav", ids: [1] }]));
+    await waitFor(() => expect((stars()[0] as HTMLInputElement).checked).toBe(true));
+
+    // ヘッダの切り替えは文字を持たない星だけ。オフは ☆。
+    expect(favOnly().textContent).toBe("☆");
+    expect(favOnly().getAttribute("aria-pressed")).toBe("false");
+    await user.click(favOnly());
+
+    await waitFor(() => expect(grid()).toHaveLength(1));
+    expect(window.location.search).toBe("?fav=1");
+    expect(favOnly().getAttribute("aria-pressed")).toBe("true");
+    expect(favOnly().textContent).toBe("★");
+
+    // もう一度押すと Fav のみの表示が外れる。
+    await user.click(favOnly());
+
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    expect(window.location.search).toBe("");
+    expect(favOnly().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Fav のみの表示で外すと一覧から消える", async () => {
+    const user = userEvent.setup();
+    live[0] = { ...live[0], fav_at: "2026-08-21T10:00:00Z" };
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(1));
+    expect((stars()[0] as HTMLInputElement).checked).toBe(true);
+
+    await user.click(stars()[0]);
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav/remove", ids: [1] }]));
+    expect(await screen.findByText("条件に合う画像がありません。")).toBeTruthy();
+  });
+
+  it("詳細から Fav を付け外しできる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(grid()[0]);
+    await screen.findByText("00001.png");
+
+    await user.click(screen.getByRole("button", { name: "Fav に追加" }));
+    const remove = await screen.findByRole("button", { name: "Fav を外す" });
+    expect(favRequests).toEqual([{ url: "/api/fav", ids: [1] }]);
+
+    await user.click(remove);
+    await screen.findByRole("button", { name: "Fav に追加" });
+    expect(favRequests[1]).toEqual({ url: "/api/fav/remove", ids: [1] });
+  });
+
+  it("選んだ画像をまとめて Fav にできる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    await user.click(boxes()[1]);
+    await user.click(screen.getByRole("button", { name: "Fav に追加" }));
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav", ids: [1, 2] }]));
+    await waitFor(() => expect(screen.queryByText("2 件選択中")).toBeNull());
+    await waitFor(() =>
+      expect(stars().map((s) => (s as HTMLInputElement).checked)).toEqual([true, true, false]),
+    );
+  });
+
+  it("条件をすべて解除すると Fav のみの表示も外れる", async () => {
+    const user = userEvent.setup();
+    live[0] = { ...live[0], fav_at: "2026-08-21T10:00:00Z" };
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(1));
+
+    await user.click(screen.getByRole("button", { name: "条件をすべて解除" }));
+
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    expect(window.location.search).toBe("");
+    expect(favOnly().getAttribute("aria-pressed")).toBe("false");
   });
 });

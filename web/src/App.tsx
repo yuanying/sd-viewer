@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { emptyTrash, moveToTrash, purgeFromTrash, restoreFromTrash } from "./api";
+import { emptyTrash, moveToTrash, purgeFromTrash, restoreFromTrash, setFav } from "./api";
 import { FacetPanel } from "./components/FacetPanel";
 import { ImageDetail } from "./components/ImageDetail";
 import { ImageGrid } from "./components/ImageGrid";
 import { SearchBar } from "./components/SearchBar";
 import { TrashView } from "./components/TrashView";
-import { emptyFilters, hasAnyFilter } from "./filters";
 import {
   errorMessage,
   useFacets,
@@ -78,6 +77,26 @@ export default function App() {
     [clearSelection, reload, reloadBin, refresh],
   );
 
+  /** favorite は Fav を付け外しし、終わったら一覧を取り直す。すべてできたかを返す。 */
+  const favorite = useCallback(
+    (ids: number[], fav: boolean) =>
+      setFav(ids, fav)
+        .then((res) => {
+          setNotice(res.failed?.length ? res.failed[0].reason : null);
+          reload();
+          return !res.failed?.length;
+        })
+        .catch((err: unknown) => {
+          setNotice(errorMessage(err));
+          return false;
+        }),
+    [reload],
+  );
+
+  const favSelected = () => {
+    void favorite([...selection.ids], true).then((ok) => ok && clearSelection());
+  };
+
   const trashSelected = () => apply(() => moveToTrash([...selection.ids]));
 
   const trashOne = (id: number) => {
@@ -116,19 +135,22 @@ export default function App() {
             </>
           ) : (
             <>
-              <span className="summary">
-                {list.total.toLocaleString()} 件
-                {hasAnyFilter(filters) && status && ` / 全 ${status.total.toLocaleString()} 件`}
-              </span>
+              {/* 絞り込み中の全件数と解除の操作はサイドバーに置き、ヘッダの並びを動かさない。 */}
+              <span className="summary">{list.total.toLocaleString()} 件</span>
+              <button
+                type="button"
+                className={filters.fav ? "fav-toggle on" : "fav-toggle"}
+                aria-pressed={filters.fav}
+                aria-label="Fav のみ表示"
+                title="Fav のみ表示"
+                onClick={() => setFilters({ ...filters, fav: !filters.fav })}
+              >
+                {filters.fav ? "★" : "☆"}
+              </button>
               {scanning && (
                 <span className="scanning">
                   スキャン中… {status?.scan.indexed.toLocaleString()} 件
                 </span>
-              )}
-              {hasAnyFilter(filters) && (
-                <button type="button" className="link" onClick={() => setFilters(emptyFilters())}>
-                  条件をすべて解除
-                </button>
               )}
               {trashTotal > 0 && (
                 <button type="button" className="action" onClick={() => setView("trash")}>
@@ -141,7 +163,9 @@ export default function App() {
         {!showingTrash && <SearchBar filters={filters} onChange={setFilters} />}
       </header>
 
-      {!showingTrash && <FacetPanel facets={facets} filters={filters} onChange={setFilters} />}
+      {!showingTrash && (
+        <FacetPanel facets={facets} filters={filters} total={status?.total} onChange={setFilters} />
+      )}
 
       <main className="main">
         {notice && <p className="error">{notice}</p>}
@@ -164,6 +188,9 @@ export default function App() {
             {selection.ids.size > 0 && (
               <div className="selection-bar">
                 <span>{selection.ids.size.toLocaleString()} 件選択中</span>
+                <button type="button" className="action" onClick={favSelected}>
+                  Fav に追加
+                </button>
                 <button type="button" className="action danger" onClick={trashSelected}>
                   ゴミ箱へ移動
                 </button>
@@ -181,6 +208,7 @@ export default function App() {
               onSelect={(image) => setSelected(image.id)}
               selected={selection.ids}
               onToggle={selection.toggle}
+              onFav={(image, fav) => void favorite([image.id], fav)}
             />
           </>
         )}
@@ -196,6 +224,7 @@ export default function App() {
           onNext={() => move(1)}
           canSend={status?.webui ?? false}
           onTrash={trashOne}
+          onFav={(id, fav) => favorite([id], fav)}
         />
       )}
     </div>

@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { facetLabels, toggleFacet } from "../filters";
+import { emptyFilters, facetLabels, hasAnyFilter, toggleFacet } from "../filters";
 import type { FacetKey, FacetSet, FacetValue, Filters } from "../types";
 
 interface Props {
   facets: FacetSet | null;
   filters: Filters;
+  /** total は絞り込む前の全件数。まだ分からなければ undefined。 */
+  total?: number;
   onChange: (next: Filters) => void;
 }
 
@@ -23,20 +25,39 @@ const groups: { key: FacetKey; pick: (f: FacetSet) => FacetValue[] }[] = [
   { key: "root", pick: (f) => f.roots },
 ];
 
-export function FacetPanel({ facets, filters, onChange }: Props) {
+export function FacetPanel({ facets, filters, total, onChange }: Props) {
   return (
     <aside className="facets">
+      <FilterStatus filters={filters} total={total} onChange={onChange} />
       <SelectedTags filters={filters} onChange={onChange} />
       {groups.map(({ key, pick }) => (
         <FacetGroup
           key={key}
           facetKey={key}
-          values={facets ? pick(facets) : []}
+          // 古いサーバは候補の無い項目を null で返すため、空として扱う。
+          values={(facets && pick(facets)) ?? []}
           selected={filters[key]}
           onToggle={(value) => onChange(toggleFacet(filters, key, value))}
         />
       ))}
     </aside>
+  );
+}
+
+/** FilterStatus は絞り込み中であることを示し、条件をまとめて外せるようにする。 */
+function FilterStatus({ filters, total, onChange }: Omit<Props, "facets">) {
+  if (!hasAnyFilter(filters)) {
+    return null;
+  }
+  return (
+    <section className="facet-group filter-status">
+      {total !== undefined && (
+        <span className="count">全 {total.toLocaleString()} 件から絞り込み中</span>
+      )}
+      <button type="button" className="link" onClick={() => onChange(emptyFilters())}>
+        条件をすべて解除
+      </button>
+    </section>
   );
 }
 

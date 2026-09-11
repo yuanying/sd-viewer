@@ -11,13 +11,14 @@ import (
 // imageColumns は一覧・詳細で共通して読み出す列。
 const imageColumns = `id, root, path, dir, name, size, mtime, width, height, created_at,
 	has_params, prompt, negative, model, model_hash, sampler, schedule_type, steps,
-	cfg_scale, seed, denoising, version, gen_width, gen_height, trashed_at, orig_path`
+	cfg_scale, seed, denoising, version, gen_width, gen_height, trashed_at, orig_path, fav_at`
 
 // imageTimes は SQLite が整数で持つ日時の受け皿。
 type imageTimes struct {
 	mtime   int64
 	created int64
 	trashed int64
+	faved   int64
 }
 
 // apply は読み出した整数を Image の日時へ移す。
@@ -26,6 +27,9 @@ func (t imageTimes) apply(img *Image) {
 	img.CreatedAt = time.Unix(0, t.created).UTC()
 	if t.trashed > 0 {
 		img.TrashedAt = time.Unix(0, t.trashed).UTC()
+	}
+	if t.faved > 0 {
+		img.FavAt = time.Unix(0, t.faved).UTC()
 	}
 }
 
@@ -36,7 +40,7 @@ func scanTargets(img *Image, times *imageTimes) []any {
 		&img.Width, &img.Height, &times.created, &img.HasParams, &img.Prompt, &img.Negative,
 		&img.Model, &img.ModelHash, &img.Sampler, &img.ScheduleType, &img.Steps,
 		&img.CFGScale, &img.Seed, &img.Denoising, &img.Version, &img.GenWidth, &img.GenHeight,
-		&times.trashed, &img.OrigPath,
+		&times.trashed, &img.OrigPath, &times.faved,
 	}
 }
 
@@ -71,11 +75,13 @@ type Query struct {
 	ExcludeTags []string
 	// Trashed が真ならゴミ箱の中だけを、偽ならゴミ箱の外だけを対象とする。
 	Trashed bool
-	From    time.Time
-	To      time.Time
-	Sort    SortOrder
-	Limit   int
-	Offset  int
+	// Fav が真なら Fav にした画像だけを対象とする。ほかの条件とは AND で結ぶ。
+	Fav    bool
+	From   time.Time
+	To     time.Time
+	Sort   SortOrder
+	Limit  int
+	Offset int
 }
 
 // SearchResult は検索結果と、条件に一致した総件数を表す。
@@ -224,7 +230,8 @@ func (d *DB) facetValues(ctx context.Context, query string, args ...any) ([]Face
 	}
 	defer rows.Close()
 
-	var values []FacetValue
+	// 候補が無くても nil にはしない。JSON で null になると、画面が長さを読めずに落ちる。
+	values := []FacetValue{}
 	for rows.Next() {
 		var v FacetValue
 		if err := rows.Scan(&v.Value, &v.Count); err != nil {
@@ -276,6 +283,10 @@ func buildWhere(q Query, skip facet) (string, []any) {
 	conds := []string{`images.trashed_at = 0`}
 	if q.Trashed {
 		conds[0] = `images.trashed_at > 0`
+	}
+	// Fav はファセットではないため、どの集計でも外さない。
+	if q.Fav {
+		conds = append(conds, `images.fav_at > 0`)
 	}
 	var args []any
 

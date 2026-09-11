@@ -39,6 +39,8 @@ export interface Image {
   trashed_at?: string;
   /** ゴミ箱へ入れる前のパス。 */
   orig_path?: string;
+  /** Fav にした日時。Fav の画像だけが持つ。 */
+  fav_at?: string;
 }
 
 export interface SearchResult {
@@ -82,6 +84,9 @@ export interface TrashResult {
   done: number;
   failed?: TrashFailure[];
 }
+
+/** Fav をまとめて付け外しした結果。形はゴミ箱の操作と同じ。 */
+export type FavResult = TrashResult;
 
 export interface Status {
   total: number;
@@ -129,4 +134,6 @@ export interface Filters {
   from: string;
   to: string;
   sort: SortOrder;
+  /** 真なら Fav にした画像だけを出す。 */
+  fav: boolean;
 }

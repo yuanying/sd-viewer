@@ -420,6 +420,41 @@ func TestWatch_移動しても同じ画像として扱う(t *testing.T) {
 	}
 }
 
+func TestWatch_移動してもFavは残る(t *testing.T) {
+	// Given: 監視中のディレクトリと、Fav にした画像
+	dir := t.TempDir()
+	writeFile(t, dir, "existing.png", pngBytes(sampleParams))
+	db := newTestIndex(t)
+	s := newScanner(t, db, dir, nil)
+	ctx := t.Context()
+	startWatching(t, ctx, s)
+
+	before, err := db.Search(ctx, index.Query{})
+	if err != nil || before.Total != 1 {
+		t.Fatalf("setup failed: %v %#v", err, before)
+	}
+	if err := db.SetFav(ctx, before.Images[0].ID, true, time.Now()); err != nil {
+		t.Fatalf("SetFav() error = %v", err)
+	}
+
+	// When: 同じルート内で移動する
+	if err := os.Rename(filepath.Join(dir, "existing.png"), filepath.Join(dir, "moved.png")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: 移動先のパスで Fav の一覧に出る
+	waitFor(t, "移動の反映", func() bool {
+		return slices.Equal(indexedPaths(t, db), []string{"moved.png"})
+	})
+	faved, err := db.Search(ctx, index.Query{Fav: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if faved.Total != 1 || faved.Images[0].Path != "moved.png" {
+		t.Errorf("Fav の一覧 = %#v, want moved.png の 1 件", faved.Images)
+	}
+}
+
 func TestWatch_書き込み中のファイルは完了してから解析する(t *testing.T) {
 	// Given: 監視中のディレクトリ
 	dir := t.TempDir()

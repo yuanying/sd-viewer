@@ -229,6 +229,14 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.filter-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
 .count {
   color: var(--text-muted);
   font-size: 12px;
@@ -425,6 +433,66 @@ button:focus-visible {
 .action.danger:hover {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+/* ---------- Fav ---------- */
+
+/* 星はチェックボックスの代わりに見せる。入力そのものは見えなくして残す。 */
+.cell-fav {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  padding: 4px 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  text-shadow: 0 0 3px #000;
+  /* Fav でないうちは、触れたときだけ出す。 */
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.cell-fav input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.cell-slot:hover .cell-fav,
+.cell-slot:focus-within .cell-fav,
+.cell-fav.on {
+  opacity: 1;
+}
+
+.cell-fav.on,
+.action.on {
+  color: #f5c518;
+}
+
+.action.on {
+  border-color: #f5c518;
+}
+
+/* ヘッダの「Fav のみ表示」。枠を持たない星だけの切り替え。 */
+.fav-toggle {
+  padding: 0 2px;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.fav-toggle:hover {
+  color: var(--text);
+}
+
+.fav-toggle.on {
+  color: #f5c518;
 }
 
 /* ---------- 詳細 ---------- */

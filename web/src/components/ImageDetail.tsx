@@ -16,6 +16,8 @@ interface Props {
   canSend: boolean;
   /** onTrash は開いている 1 枚をゴミ箱へ入れる。 */
   onTrash: (id: number) => void;
+  /** onFav は開いている 1 枚の Fav を付け外しし、できたかどうかを返す。 */
+  onFav: (id: number, fav: boolean) => Promise<boolean>;
 }
 
 /** ImageDetail は 1 枚の生成情報を並べ、そこから絞り込めるようにする。 */
@@ -28,6 +30,7 @@ export function ImageDetail({
   onNext,
   canSend,
   onTrash,
+  onFav,
 }: Props) {
   const [image, setImage] = useState<Image | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +67,18 @@ export function ImageDetail({
     onClose();
   };
 
+  /** toggleFav は Fav を付け外しし、できたら表示中の 1 枚にも写す。 */
+  const toggleFav = (target: Image) => {
+    const fav = !target.fav_at;
+    void onFav(target.id, fav).then((ok) => {
+      if (!ok) {
+        return;
+      }
+      const favAt = fav ? new Date().toISOString() : undefined;
+      setImage((current) => (current?.id === target.id ? { ...current, fav_at: favAt } : current));
+    });
+  };
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="detail" onClick={(e) => e.stopPropagation()}>
@@ -91,7 +106,13 @@ export function ImageDetail({
           {error && <p className="error">{error}</p>}
           {!image && !error && <p className="notice">読み込み中…</p>}
           {image && (
-            <Meta image={image} narrow={narrow} canSend={canSend} onTrash={onTrash} />
+            <Meta
+              image={image}
+              narrow={narrow}
+              canSend={canSend}
+              onTrash={onTrash}
+              onToggleFav={() => toggleFav(image)}
+            />
           )}
         </div>
       </div>
@@ -104,11 +125,13 @@ function Meta({
   narrow,
   canSend,
   onTrash,
+  onToggleFav,
 }: {
   image: Image;
   narrow: (key: FacetKey, value: string) => void;
   canSend: boolean;
   onTrash: (id: number) => void;
+  onToggleFav: () => void;
 }) {
   return (
     <>
@@ -117,7 +140,7 @@ function Meta({
         {image.root} / {image.dir}
       </p>
 
-      <Actions image={image} canSend={canSend} onTrash={onTrash} />
+      <Actions image={image} canSend={canSend} onTrash={onTrash} onToggleFav={onToggleFav} />
 
       <dl className="params">
         <Row label="生成日時">{new Date(image.created_at).toLocaleString()}</Row>
@@ -244,10 +267,12 @@ function Actions({
   image,
   canSend,
   onTrash,
+  onToggleFav,
 }: {
   image: Image;
   canSend: boolean;
   onTrash: (id: number) => void;
+  onToggleFav: () => void;
 }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -275,6 +300,13 @@ function Actions({
 
   return (
     <div className="actions">
+      <button
+        type="button"
+        className={image.fav_at ? "action on" : "action"}
+        onClick={onToggleFav}
+      >
+        {image.fav_at ? "Fav を外す" : "Fav に追加"}
+      </button>
       {canSend && (
         <>
           <button type="button" className="action" onClick={() => send("txt2img")}>

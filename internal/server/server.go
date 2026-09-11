@@ -100,6 +100,8 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("POST /api/trash/restore", s.handleRestore)
 	s.mux.HandleFunc("POST /api/trash/purge", s.handlePurge)
 	s.mux.HandleFunc("POST /api/trash/empty", s.handleEmpty)
+	s.mux.HandleFunc("POST /api/fav", s.handleFav)
+	s.mux.HandleFunc("POST /api/fav/remove", s.handleUnfav)
 	// 未知の API は画面ではなく 404 として扱う。
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")

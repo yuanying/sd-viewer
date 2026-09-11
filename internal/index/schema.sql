@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS images (
     trashed_at    INTEGER NOT NULL DEFAULT 0,
     -- ゴミ箱へ入れる前のパス。戻し先として使う。
     orig_path     TEXT    NOT NULL DEFAULT '',
+    -- Fav にした日時。0 なら Fav ではない。
+    fav_at        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (root, path)
 );
 
