@@ -31,7 +31,8 @@ export function FacetPanel({ facets, filters, onChange }: Props) {
         <FacetGroup
           key={key}
           facetKey={key}
-          values={facets ? pick(facets) : []}
+          // 古いサーバは候補の無い項目を null で返すため、空として扱う。
+          values={(facets && pick(facets)) ?? []}
           selected={filters[key]}
           onToggle={(value) => onChange(toggleFacet(filters, key, value))}
         />

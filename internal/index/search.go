@@ -230,7 +230,8 @@ func (d *DB) facetValues(ctx context.Context, query string, args ...any) ([]Face
 	}
 	defer rows.Close()
 
-	var values []FacetValue
+	// 候補が無くても nil にはしない。JSON で null になると、画面が長さを読めずに落ちる。
+	values := []FacetValue{}
 	for rows.Next() {
 		var v FacetValue
 		if err := rows.Scan(&v.Value, &v.Count); err != nil {

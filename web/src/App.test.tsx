@@ -90,6 +90,9 @@ let webui = true;
 /** sent は画面が送った送信要求を覚える。 */
 let sent: { url: string; body: unknown }[] = [];
 
+/** facetResponse は /api/facets の応答。既定は facets。 */
+let facetResponse: unknown = facets;
+
 /** favRequests は画面が送った Fav の付け外しを覚える。 */
 let favRequests: { url: string; ids: number[] }[] = [];
 
@@ -180,7 +183,7 @@ function stubFetch() {
         return respond({ total: images.length, images } satisfies SearchResult);
       }
       if (url.startsWith("/api/facets")) {
-        return respond(facets);
+        return respond(facetResponse);
       }
       if (url.startsWith("/api/tags")) {
         return respond([{ tag: "smile", count: 2 }] satisfies TagCount[]);
@@ -208,6 +211,7 @@ beforeEach(() => {
   requests = [];
   sent = [];
   favRequests = [];
+  facetResponse = facets;
   webui = true;
   live = [image(1), image(2), image(3, { model: "modelB" })];
   binned = [];
@@ -313,6 +317,27 @@ describe("App", () => {
 
     expect(screen.queryByRole("button", { name: "txt2img へ送る" })).toBeNull();
     expect(screen.queryByRole("button", { name: "img2img へ送る" })).toBeNull();
+  });
+
+  it("結果が 0 件でファセットが空配列でも落ちずに描画する", async () => {
+    live = [];
+    facetResponse = { models: [], loras: [], samplers: [], sizes: [], dirs: [], roots: [] };
+    render(<App />);
+
+    expect(await screen.findByText("条件に合う画像がありません。")).toBeTruthy();
+    await waitFor(() => expect(requests.some((url) => url.startsWith("/api/facets"))).toBe(true));
+    expect(screen.getByRole("button", { name: /Fav のみ/ })).toBeTruthy();
+  });
+
+  it("ファセットの項目が null でも落ちずに描画する", async () => {
+    facetResponse = { models: null, loras: null, samplers: null, sizes: null, dirs: null, roots: null };
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+    await waitFor(() => expect(requests.some((url) => url.startsWith("/api/facets"))).toBe(true));
+    // 応答を描き終えたあとも一覧が残っている。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3);
   });
 
   it("条件をすべて解除すると元の一覧に戻る", async () => {
