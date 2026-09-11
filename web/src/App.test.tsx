@@ -93,11 +93,14 @@ let webui = true;
 /** sent は画面が送った送信要求を覚える。 */
 let sent: { url: string; body: unknown }[] = [];
 
-/** facetResponse は /api/facets の応答。既定は facets。 */
+/** facetResponse は /api/facets の応答。既定は facets。関数なら問い合わせのたびに作る。 */
 let facetResponse: unknown = facets;
 
 /** favRequests は画面が送った Fav の付け外しを覚える。 */
 let favRequests: { url: string; ids: number[] }[] = [];
+
+/** failFav が真なら、Fav の付け外しをすべて失敗させる。 */
+let failFav = false;
 
 /** stubFetch は API の応答を差し替える。 */
 function stubFetch() {
@@ -116,6 +119,12 @@ function stubFetch() {
       if (url === "/api/fav" || url === "/api/fav/remove") {
         const ids = takeIDs(init);
         favRequests.push({ url, ids });
+        if (failFav) {
+          return respondJSON({
+            done: 0,
+            failed: ids.map((id) => ({ id, reason: "Fav を変更できませんでした" })),
+          });
+        }
         const on = url === "/api/fav";
         const mark = (img: Image): Image =>
           ids.includes(img.id) ? { ...img, fav_at: on ? "2026-08-21T10:00:00Z" : undefined } : img;
@@ -192,7 +201,10 @@ function stubFetch() {
         } satisfies SearchResult);
       }
       if (url.startsWith("/api/facets")) {
-        return respond(facetResponse);
+        const params = new URLSearchParams(url.split("?")[1] ?? "");
+        return respond(
+          typeof facetResponse === "function" ? facetResponse(params) : facetResponse,
+        );
       }
       if (url.startsWith("/api/tags")) {
         return respond([{ tag: "smile", count: 2 }] satisfies TagCount[]);
@@ -220,6 +232,7 @@ beforeEach(() => {
   requests = [];
   sent = [];
   favRequests = [];
+  failFav = false;
   facetResponse = facets;
   webui = true;
   live = [image(1), image(2), image(3, { model: "modelB" })];
@@ -665,6 +678,108 @@ describe("Fav", () => {
     await waitFor(() => expect(grid()).toHaveLength(3));
     expect(window.location.search).toBe("");
     expect(favOnly().getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("Fav とサイドバーの件数", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** stars はセルごとの Fav の切り替えを返す。 */
+  const stars = () => screen.getAllByRole("checkbox", { name: /を Fav$/ });
+
+  /** modelCount はサイドバーに出ているモデルの件数を返す。 */
+  const modelCount = (model: string) =>
+    within(document.querySelector<HTMLElement>(".facets")!)
+      .getByTitle(model)
+      .querySelector(".count")?.textContent;
+
+  /** facetRequests はファセットの読み込み要求。 */
+  const facetRequests = () => requests.filter((url) => url.startsWith("/api/facets"));
+
+  /** imageRequests は一覧の読み込み要求。 */
+  const imageRequests = () => requests.filter((url) => url.startsWith("/api/images?"));
+
+  beforeEach(() => {
+    live = live.map((img) => ({ ...img, fav_at: "2026-08-21T10:00:00Z" }));
+    // サーバと同じく、条件に合う画像からモデルの件数を数える。
+    facetResponse = (params: URLSearchParams) => {
+      const shown = params.get("fav") === "1" ? live.filter((img) => img.fav_at) : live;
+      const counts = new Map<string, number>();
+      for (const img of shown) {
+        counts.set(img.model, (counts.get(img.model) ?? 0) + 1);
+      }
+      return {
+        ...facets,
+        models: [...counts].map(([value, count]) => ({ value, count })),
+      } satisfies FacetSet;
+    };
+  });
+
+  it("Fav のみの表示でグリッドの星から外すと、一覧は取り直さずにサイドバーの件数を更新する", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+    const fetched = imageRequests().length;
+    const facetsFetched = facetRequests().length;
+
+    await user.click(stars()[0]);
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav/remove", ids: [1] }]));
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+    expect(modelCount("modelB")).toBe("1");
+    expect(facetRequests().length).toBeGreaterThan(facetsFetched);
+    expect(facetRequests().at(-1)).toContain("fav=1");
+    expect(imageRequests()).toHaveLength(fetched);
+  });
+
+  it("Fav のみの表示で詳細から外しても、サイドバーの件数を更新する", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+    await user.click(grid()[0]);
+    await screen.findByText("00001.png");
+    const fetched = imageRequests().length;
+
+    await user.click(screen.getByRole("button", { name: "Fav を外す" }));
+
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+    expect(imageRequests()).toHaveLength(fetched);
+  });
+
+  it("Fav のみの表示でも、付け外しに失敗したらファセットを取り直さない", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+    const facetsFetched = facetRequests().length;
+    failFav = true;
+
+    await user.click(stars()[0]);
+
+    expect(await screen.findByText("Fav を変更できませんでした")).toBeTruthy();
+    expect(grid()).toHaveLength(3);
+    expect(modelCount("modelA")).toBe("2");
+    expect(facetRequests()).toHaveLength(facetsFetched);
+  });
+
+  it("Fav のみの表示でなければ、Fav の付け外しでファセットを取り直さない", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+    const facetsFetched = facetRequests().length;
+
+    await user.click(stars()[0]);
+
+    await waitFor(() => expect((stars()[0] as HTMLInputElement).checked).toBe(false));
+    expect(modelCount("modelA")).toBe("2");
+    expect(facetRequests()).toHaveLength(facetsFetched);
   });
 });
 

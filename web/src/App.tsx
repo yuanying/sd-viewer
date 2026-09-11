@@ -22,7 +22,7 @@ type View = "images" | "trash";
 export default function App() {
   const [filters, setFilters] = useFilters();
   const list = useImages(filters);
-  const facets = useFacets(filters);
+  const { facets, refresh: refreshFacets } = useFacets(filters);
   const { status, refresh } = useStatus();
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<View>("images");
@@ -80,25 +80,29 @@ export default function App() {
   /**
    * favorite は Fav を付け外しし、できた分だけを手元の一覧へ写す。すべてできたかを返す。
    * 一覧は取り直さない。取り直すとスクロール位置が動いてしまうため。
+   * Fav のみの表示では条件に合う画像が変わるため、サイドバーの候補だけを取り直して件数を合わせる。
+   * それ以外の表示では Fav は条件に入らず件数も変わらないため、取り直さない。
    */
   const markFav = list.markFav;
+  const favOnly = filters.fav;
   const favorite = useCallback(
     (ids: number[], fav: boolean) =>
       setFav(ids, fav)
         .then((res) => {
           setNotice(res.failed?.length ? res.failed[0].reason : null);
           const failed = new Set(res.failed?.map((f) => f.id));
-          markFav(
-            ids.filter((id) => !failed.has(id)),
-            fav ? new Date().toISOString() : undefined,
-          );
+          const done = ids.filter((id) => !failed.has(id));
+          markFav(done, fav ? new Date().toISOString() : undefined);
+          if (favOnly && done.length > 0) {
+            refreshFacets();
+          }
           return !res.failed?.length;
         })
         .catch((err: unknown) => {
           setNotice(errorMessage(err));
           return false;
         }),
-    [markFav],
+    [markFav, favOnly, refreshFacets],
   );
 
   const favSelected = () => {
