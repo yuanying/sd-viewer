@@ -5,7 +5,6 @@ import { ImageDetail } from "./components/ImageDetail";
 import { ImageGrid } from "./components/ImageGrid";
 import { SearchBar } from "./components/SearchBar";
 import { TrashView } from "./components/TrashView";
-import { emptyFilters, hasAnyFilter } from "./filters";
 import {
   errorMessage,
   useFacets,
@@ -136,10 +135,8 @@ export default function App() {
             </>
           ) : (
             <>
-              <span className="summary">
-                {list.total.toLocaleString()} 件
-                {hasAnyFilter(filters) && status && ` / 全 ${status.total.toLocaleString()} 件`}
-              </span>
+              {/* 絞り込み中の全件数と解除の操作はサイドバーに置き、ヘッダの並びを動かさない。 */}
+              <span className="summary">{list.total.toLocaleString()} 件</span>
               <button
                 type="button"
                 className={filters.fav ? "fav-toggle on" : "fav-toggle"}
@@ -155,11 +152,6 @@ export default function App() {
                   スキャン中… {status?.scan.indexed.toLocaleString()} 件
                 </span>
               )}
-              {hasAnyFilter(filters) && (
-                <button type="button" className="link" onClick={() => setFilters(emptyFilters())}>
-                  条件をすべて解除
-                </button>
-              )}
               {trashTotal > 0 && (
                 <button type="button" className="action" onClick={() => setView("trash")}>
                   ゴミ箱<span className="count">{trashTotal.toLocaleString()}</span>
@@ -171,7 +163,9 @@ export default function App() {
         {!showingTrash && <SearchBar filters={filters} onChange={setFilters} />}
       </header>
 
-      {!showingTrash && <FacetPanel facets={facets} filters={filters} onChange={setFilters} />}
+      {!showingTrash && (
+        <FacetPanel facets={facets} filters={filters} total={status?.total} onChange={setFilters} />
+      )}
 
       <main className="main">
         {notice && <p className="error">{notice}</p>}

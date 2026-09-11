@@ -229,6 +229,14 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.filter-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+
 .count {
   color: var(--text-muted);
   font-size: 12px;

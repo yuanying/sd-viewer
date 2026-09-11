@@ -340,6 +340,30 @@ describe("App", () => {
     expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3);
   });
 
+  it("絞り込み中の全件数と解除の操作はヘッダではなくサイドバーに出す", async () => {
+    // ヘッダに現れると並びが押し出され、検索バーが折り返してしまう。
+    window.history.replaceState(null, "", "/?model=modelB");
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(1));
+
+    const header = screen.getByRole("banner");
+    expect(within(header).getByText("1 件")).toBeTruthy();
+    expect(within(header).queryByText(/全 3 件/)).toBeNull();
+    expect(within(header).queryByRole("button", { name: "条件をすべて解除" })).toBeNull();
+
+    const sidebar = screen.getByRole("complementary");
+    await waitFor(() => expect(within(sidebar).getByText(/全 3 件/)).toBeTruthy());
+    expect(within(sidebar).getByRole("button", { name: "条件をすべて解除" })).toBeTruthy();
+  });
+
+  it("絞り込みが無ければ解除の操作を出さない", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /0000/ })).toHaveLength(3));
+
+    expect(screen.queryByRole("button", { name: "条件をすべて解除" })).toBeNull();
+    expect(screen.queryByText(/全 3 件/)).toBeNull();
+  });
+
   it("条件をすべて解除すると元の一覧に戻る", async () => {
     const user = userEvent.setup();
     window.history.replaceState(null, "", "/?model=modelB");
