@@ -714,4 +714,24 @@ describe("大量の画像", () => {
     expect(order()).toEqual(shown);
     expect(imageRequests()).toHaveLength(fetched);
   }, 30_000);
+
+  it("取り直す件数が上限を超えるときは上限以下に分けて取り、読み込み済みの件数を保つ", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await loadAll(650);
+    const fetched = imageRequests().length;
+
+    // ゴミ箱へ入れると一覧を取り直す。
+    await user.click(screen.getByLabelText("0000600.png を選択"));
+    await user.click(screen.getByText("ゴミ箱へ移動", { selector: "button" }));
+
+    await waitFor(() => expect(cells()).toHaveLength(649));
+    expect(order()).not.toContain(image(600).path);
+    const again = imageRequests().slice(fetched);
+    expect(again.length).toBeGreaterThan(1);
+    for (const url of again) {
+      const limit = Number(new URLSearchParams(url.split("?")[1]).get("limit"));
+      expect(limit).toBeLessThanOrEqual(maxLimit);
+    }
+  }, 30_000);
 });

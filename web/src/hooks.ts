@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchFacets, fetchStatus, fetchTrash, searchImages, subscribeStatus } from "./api";
 import { emptyFilters, filtersToSearch, searchToFilters, type Filters } from "./filters";
-import type { FacetSet, Image, Status } from "./types";
+import type { FacetSet, Image, SearchResult, Status } from "./types";
 
 /** 一度に読み込む件数。 */
 export const pageSize = 100;
+
+/** maxLimit はサーバが一度に返す件数の上限（internal/server の maxLimit と揃える）。 */
+const maxLimit = 500;
 
 /** useFilters は検索条件をアドレスバーと同期させる。 */
 export function useFilters(): [Filters, (next: Filters) => void] {
@@ -65,7 +68,7 @@ export function useImages(filters: Filters): ImageList {
 
     const controller = new AbortController();
     setLoading(true);
-    searchImages(filters, 0, want, controller.signal)
+    searchLeading(filters, want, controller.signal)
       .then((res) => {
         setImages(res.images);
         setTotal(res.total);
@@ -126,6 +129,29 @@ export function useImages(filters: Filters): ImageList {
   );
 
   return { images, total, loading, loadingMore, error, hasMore, loadMore, reload, markFav };
+}
+
+/**
+ * searchLeading は先頭から want 件を読み込む。サーバの上限を超える分は分けて取る。
+ * 一度に頼むと上限で打ち切られ、表示中の一覧が縮んでスクロール位置が飛ぶため。
+ */
+async function searchLeading(
+  filters: Filters,
+  want: number,
+  signal: AbortSignal,
+): Promise<SearchResult> {
+  let images: Image[] = [];
+  let total = 0;
+  for (let offset = 0; offset < want; offset += maxLimit) {
+    const limit = Math.min(maxLimit, want - offset);
+    const res = await searchImages(filters, offset, limit, signal);
+    images = mergeImages(images, res.images);
+    total = res.total;
+    if (res.images.length < limit) {
+      break;
+    }
+  }
+  return { images, total };
 }
 
 /** mergeImages は続きを読み込んだ際の重複を取り除く。 */
