@@ -33,6 +33,7 @@ func parseQuery(r *http.Request) index.Query {
 		Roots:       values(v, "root"),
 		Tags:        values(v, "tag"),
 		ExcludeTags: values(v, "exclude_tag"),
+		Fav:         parseFlag(v.Get("fav")),
 		From:        parseDate(v.Get("from")),
 		To:          parseDate(v.Get("to")),
 		Limit:       intParam(r, "limit", defaultLimit, maxLimit),
@@ -76,6 +77,12 @@ func intParam(r *http.Request, key string, fallback, max int) int {
 		return max
 	}
 	return n
+}
+
+// parseFlag は真偽のパラメータを読む。真と解釈できない値は偽とする。
+func parseFlag(raw string) bool {
+	b, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && b
 }
 
 // parseDate は日付または日時を読む。時刻を省いた場合はその日の始まりとする。

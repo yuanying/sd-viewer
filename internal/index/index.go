@@ -64,6 +64,8 @@ type Image struct {
 	TrashedAt time.Time `json:"trashed_at,omitzero"`
 	// OrigPath はゴミ箱へ入れる前のパス。ゴミ箱の中の画像だけが持つ。
 	OrigPath string `json:"orig_path,omitempty"`
+	// FavAt は Fav にした日時。ゼロ値なら Fav ではない。
+	FavAt time.Time `json:"fav_at,omitzero"`
 }
 
 // FileState は差分スキャンのためにインデックスが覚えているファイルの状態。
@@ -107,6 +109,7 @@ func Open(dbPath string) (*DB, error) {
 var addedColumns = []struct{ name, definition string }{
 	{"trashed_at", "INTEGER NOT NULL DEFAULT 0"},
 	{"orig_path", "TEXT NOT NULL DEFAULT ''"},
+	{"fav_at", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // migrate は古いインデックスに足りない列を継ぎ足す。
