@@ -37,6 +37,11 @@ export interface ImageList {
   hasMore: boolean;
   loadMore: () => void;
   reload: () => void;
+  /**
+   * markFav は Fav の付け外しを、取り直さずに手元の一覧へ写す。
+   * 取り直すと一覧が組み替わり、スクロール位置が動いてしまうため。
+   */
+  markFav: (ids: number[], favAt: string | undefined) => void;
 }
 
 /** useImages は条件に合う画像を読み込み、続きを継ぎ足せるようにする。 */
@@ -101,7 +106,26 @@ export function useImages(filters: Filters): ImageList {
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
 
-  return { images, total, loading, loadingMore, error, hasMore, loadMore, reload };
+  const favOnly = filters.fav;
+  const markFav = useCallback(
+    (ids: number[], favAt: string | undefined) => {
+      const targets = new Set(ids);
+      if (favOnly && favAt === undefined) {
+        // Fav のみの表示で外した画像は条件に合わなくなるため、一覧から除いて件数も減らす。
+        const removed = images.filter((img) => targets.has(img.id)).length;
+        setImages((prev) => prev.filter((img) => !targets.has(img.id)));
+        setTotal((n) => n - removed);
+        loaded.current -= removed;
+        return;
+      }
+      setImages((prev) =>
+        prev.map((img) => (targets.has(img.id) ? { ...img, fav_at: favAt } : img)),
+      );
+    },
+    [favOnly, images],
+  );
+
+  return { images, total, loading, loadingMore, error, hasMore, loadMore, reload, markFav };
 }
 
 /** mergeImages は続きを読み込んだ際の重複を取り除く。 */

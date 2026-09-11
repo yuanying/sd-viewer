@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -6,6 +6,9 @@ import type { FacetSet, Image, SearchResult, Status, TagCount } from "./types";
 
 /** requests は画面が投げた API のパスを順に覚える。 */
 let requests: string[] = [];
+
+/** maxLimit はサーバが一度に返す件数の上限。 */
+const maxLimit = 500;
 
 function image(id: number, over: Partial<Image> = {}): Image {
   return {
@@ -180,7 +183,13 @@ function stubFetch() {
         const all = params.get("fav") === "1" ? live.filter((img) => img.fav_at) : live;
         const models = params.getAll("model");
         const images = models.length === 0 ? all : all.filter((i) => models.includes(i.model));
-        return respond({ total: images.length, images } satisfies SearchResult);
+        // サーバと同じく、上限を超える件数を求められても maxLimit 件で打ち切る。
+        const offset = Number(params.get("offset") ?? 0);
+        const limit = Math.min(Number(params.get("limit") ?? 100), maxLimit);
+        return respond({
+          total: images.length,
+          images: images.slice(offset, offset + limit),
+        } satisfies SearchResult);
       }
       if (url.startsWith("/api/facets")) {
         return respond(facetResponse);
@@ -216,9 +225,10 @@ beforeEach(() => {
   live = [image(1), image(2), image(3, { model: "modelB" })];
   binned = [];
   window.history.replaceState(null, "", "/");
+  observers = new Set();
   stubFetch();
   vi.stubGlobal("EventSource", StubEventSource);
-  vi.stubGlobal("IntersectionObserver", MutationObserverStub);
+  vi.stubGlobal("IntersectionObserver", ObserverStub);
 });
 
 afterEach(() => {
@@ -226,10 +236,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** IntersectionObserver も happy-dom にないため差し替える。 */
-class MutationObserverStub {
-  observe() {}
-  disconnect() {}
+/** observers は画面が今張っている IntersectionObserver。 */
+let observers = new Set<ObserverStub>();
+
+/** IntersectionObserver も happy-dom にないため差し替える。fire で下端に届いたことにする。 */
+class ObserverStub {
+  callback: (entries: { isIntersecting: boolean }[]) => void;
+  constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+    this.callback = callback;
+  }
+  observe() {
+    observers.add(this);
+  }
+  disconnect() {
+    observers.delete(this);
+  }
+  fire() {
+    this.callback([{ isIntersecting: true }]);
+  }
 }
 
 describe("App", () => {
@@ -612,6 +636,23 @@ describe("Fav", () => {
     );
   });
 
+  it("Fav のみの表示で外すと、取り直さずにその画像だけを除いて件数を減らす", async () => {
+    const user = userEvent.setup();
+    live = live.map((img) => ({ ...img, fav_at: "2026-08-21T10:00:00Z" }));
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    expect(within(screen.getByRole("banner")).getByText("3 件")).toBeTruthy();
+    const fetched = requests.filter((url) => url.startsWith("/api/images?")).length;
+
+    await user.click(stars()[1]);
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav/remove", ids: [2] }]));
+    await waitFor(() => expect(grid().map((cell) => cell.title)).toEqual([live[0].path, live[2].path]));
+    expect(within(screen.getByRole("banner")).getByText("2 件")).toBeTruthy();
+    expect(requests.filter((url) => url.startsWith("/api/images?"))).toHaveLength(fetched);
+  });
+
   it("条件をすべて解除すると Fav のみの表示も外れる", async () => {
     const user = userEvent.setup();
     live[0] = { ...live[0], fav_at: "2026-08-21T10:00:00Z" };
@@ -625,4 +666,52 @@ describe("Fav", () => {
     expect(window.location.search).toBe("");
     expect(favOnly().getAttribute("aria-pressed")).toBe("false");
   });
+});
+
+describe("大量の画像", () => {
+  // 一覧が縮むと、ブラウザではページの高さが減ってスクロール位置が飛ぶ。
+  // happy-dom ではスクロール位置を測れないため、一覧が縮まない・取り直さないことで確かめる。
+
+  /** cells は一覧のセル。数が多いため役割ではなくクラスで引く。 */
+  const cells = () => [...document.querySelectorAll<HTMLButtonElement>(".cell")];
+
+  /** order は一覧に並んでいる画像のパス。 */
+  const order = () => cells().map((cell) => cell.title);
+
+  /** imageRequests は一覧の読み込み要求。 */
+  const imageRequests = () => requests.filter((url) => url.startsWith("/api/images?"));
+
+  /** loadAll は下端に届いたことにして、count 件になるまで続きを読み込ませる。 */
+  async function loadAll(count: number) {
+    await waitFor(() => expect(cells().length).toBeGreaterThan(0));
+    while (cells().length < count) {
+      const shown = cells().length;
+      act(() => observers.forEach((observer) => observer.fire()));
+      await waitFor(() => expect(cells().length).toBeGreaterThan(shown));
+    }
+  }
+
+  beforeEach(() => {
+    live = Array.from({ length: 650 }, (_, i) => image(i + 1));
+  });
+
+  it("500 件を超えて読み込んだあとで Fav を付け外ししても、取り直さず件数と並びを保つ", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await loadAll(650);
+    const shown = order();
+    const fetched = imageRequests().length;
+    const star = () => screen.getByLabelText<HTMLInputElement>("0000600.png を Fav");
+
+    await user.click(star());
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav", ids: [600] }]));
+    await waitFor(() => expect(star().checked).toBe(true));
+
+    await user.click(star());
+    await waitFor(() => expect(favRequests[1]).toEqual({ url: "/api/fav/remove", ids: [600] }));
+    await waitFor(() => expect(star().checked).toBe(false));
+
+    expect(order()).toEqual(shown);
+    expect(imageRequests()).toHaveLength(fetched);
+  }, 30_000);
 });
