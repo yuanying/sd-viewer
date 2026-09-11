@@ -160,9 +160,19 @@ function mergeImages(prev: Image[], next: Image[]): Image[] {
   return [...prev, ...next.filter((img) => !seen.has(img.id))];
 }
 
+export interface FacetFeed {
+  facets: FacetSet | null;
+  /**
+   * refresh は条件を変えずに候補を取り直す。取り直している間も手元の候補を見せ続ける。
+   * 一覧には触れないため、スクロール位置は動かない。
+   */
+  refresh: () => void;
+}
+
 /** useFacets は現在の条件に対する絞り込み候補を読み込む。 */
-export function useFacets(filters: Filters): FacetSet | null {
+export function useFacets(filters: Filters): FacetFeed {
   const [facets, setFacets] = useState<FacetSet | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const filterKey = useMemo(() => filtersToSearch(filters), [filters]);
 
   useEffect(() => {
@@ -174,9 +184,11 @@ export function useFacets(filters: Filters): FacetSet | null {
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey]);
+  }, [filterKey, reloadKey]);
 
-  return facets;
+  const refresh = useCallback(() => setReloadKey((n) => n + 1), []);
+
+  return { facets, refresh };
 }
 
 export interface StatusFeed {
