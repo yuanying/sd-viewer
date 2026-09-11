@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchFacets, fetchStatus, fetchTrash, searchImages, subscribeStatus } from "./api";
 import { emptyFilters, filtersToSearch, searchToFilters, type Filters } from "./filters";
-import type { FacetSet, Image, Status } from "./types";
+import type { FacetSet, Image, SearchResult, Status } from "./types";
 
 /** 一度に読み込む件数。 */
 export const pageSize = 100;
+
+/** maxLimit はサーバが一度に返す件数の上限（internal/server の maxLimit と揃える）。 */
+const maxLimit = 500;
 
 /** useFilters は検索条件をアドレスバーと同期させる。 */
 export function useFilters(): [Filters, (next: Filters) => void] {
@@ -37,6 +40,11 @@ export interface ImageList {
   hasMore: boolean;
   loadMore: () => void;
   reload: () => void;
+  /**
+   * markFav は Fav の付け外しを、取り直さずに手元の一覧へ写す。
+   * 取り直すと一覧が組み替わり、スクロール位置が動いてしまうため。
+   */
+  markFav: (ids: number[], favAt: string | undefined) => void;
 }
 
 /** useImages は条件に合う画像を読み込み、続きを継ぎ足せるようにする。 */
@@ -60,7 +68,7 @@ export function useImages(filters: Filters): ImageList {
 
     const controller = new AbortController();
     setLoading(true);
-    searchImages(filters, 0, want, controller.signal)
+    searchLeading(filters, want, controller.signal)
       .then((res) => {
         setImages(res.images);
         setTotal(res.total);
@@ -101,7 +109,49 @@ export function useImages(filters: Filters): ImageList {
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
 
-  return { images, total, loading, loadingMore, error, hasMore, loadMore, reload };
+  const favOnly = filters.fav;
+  const markFav = useCallback(
+    (ids: number[], favAt: string | undefined) => {
+      const targets = new Set(ids);
+      if (favOnly && favAt === undefined) {
+        // Fav のみの表示で外した画像は条件に合わなくなるため、一覧から除いて件数も減らす。
+        const removed = images.filter((img) => targets.has(img.id)).length;
+        setImages((prev) => prev.filter((img) => !targets.has(img.id)));
+        setTotal((n) => n - removed);
+        loaded.current -= removed;
+        return;
+      }
+      setImages((prev) =>
+        prev.map((img) => (targets.has(img.id) ? { ...img, fav_at: favAt } : img)),
+      );
+    },
+    [favOnly, images],
+  );
+
+  return { images, total, loading, loadingMore, error, hasMore, loadMore, reload, markFav };
+}
+
+/**
+ * searchLeading は先頭から want 件を読み込む。サーバの上限を超える分は分けて取る。
+ * 一度に頼むと上限で打ち切られ、表示中の一覧が縮んでスクロール位置が飛ぶため。
+ */
+async function searchLeading(
+  filters: Filters,
+  want: number,
+  signal: AbortSignal,
+): Promise<SearchResult> {
+  let images: Image[] = [];
+  let total = 0;
+  for (let offset = 0; offset < want; offset += maxLimit) {
+    const limit = Math.min(maxLimit, want - offset);
+    const res = await searchImages(filters, offset, limit, signal);
+    images = mergeImages(images, res.images);
+    total = res.total;
+    if (res.images.length < limit) {
+      break;
+    }
+  }
+  return { images, total };
 }
 
 /** mergeImages は続きを読み込んだ際の重複を取り除く。 */

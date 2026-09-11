@@ -77,20 +77,28 @@ export default function App() {
     [clearSelection, reload, reloadBin, refresh],
   );
 
-  /** favorite は Fav を付け外しし、終わったら一覧を取り直す。すべてできたかを返す。 */
+  /**
+   * favorite は Fav を付け外しし、できた分だけを手元の一覧へ写す。すべてできたかを返す。
+   * 一覧は取り直さない。取り直すとスクロール位置が動いてしまうため。
+   */
+  const markFav = list.markFav;
   const favorite = useCallback(
     (ids: number[], fav: boolean) =>
       setFav(ids, fav)
         .then((res) => {
           setNotice(res.failed?.length ? res.failed[0].reason : null);
-          reload();
+          const failed = new Set(res.failed?.map((f) => f.id));
+          markFav(
+            ids.filter((id) => !failed.has(id)),
+            fav ? new Date().toISOString() : undefined,
+          );
           return !res.failed?.length;
         })
         .catch((err: unknown) => {
           setNotice(errorMessage(err));
           return false;
         }),
-    [reload],
+    [markFav],
   );
 
   const favSelected = () => {
