@@ -1089,3 +1089,107 @@ describe("ゴミ箱・監視とサイドバーの件数", () => {
     await waitFor(() => expect(modelCount("modelB")).toBe("2"));
   });
 });
+
+describe("詳細の前後送り", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** prev と next は詳細の ← → 。 */
+  const prev = () => screen.getByRole("button", { name: "前の画像" });
+  const next = () => screen.getByRole("button", { name: "次の画像" });
+
+  /** openFavOnly は 3 枚すべてを Fav にした「Fav のみ」表示を開く。 */
+  async function openFavOnly(user: ReturnType<typeof userEvent.setup>, name: string) {
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(grid()[1]);
+    await screen.findByText(name);
+  }
+
+  beforeEach(() => {
+    live = live.map((img) => ({ ...img, fav_at: "2026-08-21T10:00:00Z" }));
+    window.history.replaceState(null, "", "/?fav=1");
+  });
+
+  it("一覧に居る画像では ← → が一覧の並びで動く", async () => {
+    const user = userEvent.setup();
+    await openFavOnly(user, "00002.png");
+
+    await user.click(next());
+    expect(await screen.findByText("00003.png")).toBeTruthy();
+
+    await user.click(prev());
+    expect(await screen.findByText("00002.png")).toBeTruthy();
+  });
+
+  it("端では ← → で動かない", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(grid()[0]);
+    await screen.findByText("00001.png");
+
+    await user.click(prev());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByText("00001.png")).toBeTruthy();
+
+    await user.click(next());
+    await user.click(next());
+    await screen.findByText("00003.png");
+    await user.click(next());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByText("00003.png")).toBeTruthy();
+  });
+
+  it("開いている画像が一覧から消えても、詳細は開いたままになる", async () => {
+    const user = userEvent.setup();
+    await openFavOnly(user, "00002.png");
+
+    await user.click(screen.getByRole("button", { name: "Fav を外す" }));
+
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    expect(screen.getByText("00002.png")).toBeTruthy();
+  });
+
+  it("一覧から消えた画像でも → で元の次の画像へ進む", async () => {
+    const user = userEvent.setup();
+    await openFavOnly(user, "00002.png");
+    await user.click(screen.getByRole("button", { name: "Fav を外す" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+
+    await user.click(next());
+
+    // 先頭（00001.png）に飛ばず、消える直前の次へ進む。
+    expect(await screen.findByText("00003.png")).toBeTruthy();
+  });
+
+  it("一覧から消えた画像でも ← で元の前の画像へ戻る", async () => {
+    const user = userEvent.setup();
+    await openFavOnly(user, "00002.png");
+    await user.click(screen.getByRole("button", { name: "Fav を外す" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+
+    await user.click(prev());
+
+    expect(await screen.findByText("00001.png")).toBeTruthy();
+  });
+
+  it("末尾の画像を一覧から消したあとは、→ で動かない", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(grid()[2]);
+    await screen.findByText("00003.png");
+
+    await user.click(screen.getByRole("button", { name: "Fav を外す" }));
+    await waitFor(() => expect(grid()).toHaveLength(2));
+
+    await user.click(next());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByText("00003.png")).toBeTruthy();
+
+    // ← は消える直前の前の画像へ戻れる。
+    await user.click(prev());
+    expect(await screen.findByText("00002.png")).toBeTruthy();
+  });
+});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { emptyTrash, moveToTrash, purgeFromTrash, restoreFromTrash, setFav } from "./api";
 import { FacetPanel } from "./components/FacetPanel";
 import { ImageDetail } from "./components/ImageDetail";
@@ -43,6 +43,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [total]);
 
+  /**
+   * neighbors は詳細で開いている画像の両隣を覚えておく。
+   * 開いた画像が一覧から消えても（「Fav のみ」の表示で Fav を外したときなど）詳細は開いたままに
+   * するため、← → の行き先を一覧から引けなくなる。消える直前の両隣を起点にして前後へ進む。
+   */
+  const neighbors = useRef<{ prev?: number; next?: number }>({});
+  useEffect(() => {
+    if (selected === null) {
+      neighbors.current = {};
+      return;
+    }
+    const at = list.images.findIndex((img) => img.id === selected);
+    if (at < 0) {
+      // 一覧から消えた画像。最後に居た位置の両隣をそのまま残す。
+      return;
+    }
+    neighbors.current = { prev: list.images[at - 1]?.id, next: list.images[at + 1]?.id };
+  }, [selected, list.images]);
+
   const move = useCallback(
     (step: number) => {
       setSelected((current) => {
@@ -50,6 +69,11 @@ export default function App() {
           return current;
         }
         const at = list.images.findIndex((img) => img.id === current);
+        if (at < 0) {
+          // 一覧から消えた画像は位置を引けないため、覚えておいた両隣へ進む。
+          const to = step < 0 ? neighbors.current.prev : neighbors.current.next;
+          return to ?? current;
+        }
         const next = list.images[at + step];
         return next ? next.id : current;
       });
