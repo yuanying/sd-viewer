@@ -223,15 +223,30 @@ function stubFetch() {
   );
 }
 
+/** sources は画面が今張っている購読。監視からの通知を後から配るために覚える。 */
+let sources = new Set<StubEventSource>();
+
 /** EventSource は happy-dom にないため、購読直後に状態を配る実装で置き換える。 */
 class StubEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
   constructor() {
-    queueMicrotask(() => {
-      this.onmessage?.({ data: JSON.stringify(currentStatus()) } as MessageEvent);
-    });
+    sources.add(this);
+    queueMicrotask(() => this.send());
   }
-  close() {}
+  /** send は今の状態を配る。監視で枚数が変わったことにするために使う。 */
+  send() {
+    this.onmessage?.({ data: JSON.stringify(currentStatus()) } as MessageEvent);
+  }
+  close() {
+    sources.delete(this);
+  }
+}
+
+/** notifyStatus は購読している画面へ今の状態を配る。 */
+function notifyStatus() {
+  for (const source of sources) {
+    source.send();
+  }
 }
 
 beforeEach(() => {
@@ -246,6 +261,7 @@ beforeEach(() => {
   binned = [];
   window.history.replaceState(null, "", "/");
   observers = new Set();
+  sources = new Set();
   stubFetch();
   vi.stubGlobal("EventSource", StubEventSource);
   vi.stubGlobal("IntersectionObserver", ObserverStub);
@@ -956,5 +972,120 @@ describe("一覧から消えた画像の選択", () => {
     // 起点が消えているため、00002.png まで巻き込まない。
     expect(screen.getByText("1 件選択中")).toBeTruthy();
     expect(box("00002.png").checked).toBe(false);
+  });
+});
+
+describe("ゴミ箱・監視とサイドバーの件数", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** boxes は選択用のチェックボックスを返す。 */
+  const boxes = () => screen.getAllByRole("checkbox", { name: /を選択$/ });
+
+  /** modelCount はサイドバーに出ているモデルの件数。 */
+  const modelCount = (model: string) =>
+    within(document.querySelector<HTMLElement>(".facets")!)
+      .getByTitle(model)
+      .querySelector(".count")?.textContent;
+
+  /** facetRequests はファセットの読み込み要求。 */
+  const facetRequests = () => requests.filter((url) => url.startsWith("/api/facets"));
+
+  /** openTrash はゴミ箱ビューへ切り替える。 */
+  async function openTrash(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /^ゴミ箱/ }));
+    return screen.findByRole("region", { name: "ゴミ箱" });
+  }
+
+  beforeEach(() => {
+    // サーバと同じく、一覧に出ている画像からモデルの件数を数える。
+    facetResponse = () => {
+      const counts = new Map<string, number>();
+      for (const img of live) {
+        counts.set(img.model, (counts.get(img.model) ?? 0) + 1);
+      }
+      return {
+        ...facets,
+        models: [...counts].map(([value, count]) => ({ value, count })),
+      } satisfies FacetSet;
+    };
+  });
+
+  it("ゴミ箱へ移すとサイドバーの件数が減る", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+  });
+
+  it("ゴミ箱から戻すとサイドバーの件数も戻る", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+
+    const view = await openTrash(user);
+    await user.click(await within(view).findByRole("button", { name: /00001\.png を元に戻す/ }));
+    await waitFor(() => expect(binned).toHaveLength(0));
+    await user.click(screen.getByRole("button", { name: "一覧へ戻る" }));
+
+    await waitFor(() => expect(modelCount("modelA")).toBe("2"));
+  });
+
+  it("完全に削除するとサイドバーの候補を取り直す", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("confirm", () => true);
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+
+    const view = await openTrash(user);
+    const fetched = facetRequests().length;
+    await user.click(await within(view).findByRole("button", { name: /00001\.png を完全に削除/ }));
+
+    await waitFor(() => expect(binned).toHaveLength(0));
+    await waitFor(() => expect(facetRequests().length).toBeGreaterThan(fetched));
+  });
+
+  it("ゴミ箱を空にするとサイドバーの候補を取り直す", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("confirm", () => true);
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+    await waitFor(() => expect(modelCount("modelA")).toBe("1"));
+
+    const view = await openTrash(user);
+    const fetched = facetRequests().length;
+    await user.click(await within(view).findByRole("button", { name: "空にする" }));
+
+    await waitFor(() => expect(binned).toHaveLength(0));
+    await waitFor(() => expect(facetRequests().length).toBeGreaterThan(fetched));
+  });
+
+  it("監視で枚数が変わって一覧を取り直すと、サイドバーの件数も追随する", async () => {
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await waitFor(() => expect(modelCount("modelB")).toBe("1"));
+
+    // 監視が 1 枚見つけたことにして、状態を配る。
+    live = [...live, image(4, { model: "modelB" })];
+    await act(async () => {
+      notifyStatus();
+    });
+
+    await waitFor(() => expect(grid()).toHaveLength(4));
+    await waitFor(() => expect(modelCount("modelB")).toBe("2"));
   });
 });

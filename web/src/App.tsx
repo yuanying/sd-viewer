@@ -31,12 +31,13 @@ export default function App() {
   const selection = useSelection(list.images, !list.loading && list.error === null);
   const bin = useTrash(view === "trash");
 
-  // 監視によって枚数が変わったら一覧を取り直す。
+  // 監視によって枚数が変わったら一覧と絞り込み候補を取り直す。
   const total = status?.total;
   const reload = list.reload;
   useEffect(() => {
     if (total !== undefined && total !== list.total) {
       reload();
+      refreshFacets();
     }
     // 表示中の件数は毎回変わるため、監視側の枚数だけを見る。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,7 +63,10 @@ export default function App() {
   const clearSelection = selection.clear;
   const reloadBin = bin.reload;
 
-  /** apply はゴミ箱の操作を投げ、終わったら一覧と件数を取り直す。 */
+  /**
+   * apply はゴミ箱の操作を投げ、終わったら一覧と件数、絞り込み候補を取り直す。
+   * ゴミ箱に出し入れした画像は一覧に出る範囲から必ず増減するため、候補は条件を問わず取り直す。
+   */
   const apply = useCallback(
     (run: () => Promise<TrashResult>) => {
       run()
@@ -72,10 +76,11 @@ export default function App() {
           reload();
           reloadBin();
           refresh();
+          refreshFacets();
         })
         .catch((err: unknown) => setNotice(errorMessage(err)));
     },
-    [clearSelection, reload, reloadBin, refresh],
+    [clearSelection, reload, reloadBin, refresh, refreshFacets],
   );
 
   /**
