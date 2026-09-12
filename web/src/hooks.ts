@@ -283,18 +283,43 @@ export interface Selection {
   clear: () => void;
 }
 
-/** useSelection はグリッドの複数選択を預かる。 */
-export function useSelection(images: Image[]): Selection {
+/**
+ * useSelection はグリッドの複数選択を預かる。
+ * 一覧から消えた画像は選択に残さない。見えていない画像に操作が及ばないようにするため。
+ * ready は一覧が当てになるかどうか。読み込み中や読み込みに失敗している間は偽にして、
+ * 一時的に空になった一覧で選択を落とさないようにする。
+ */
+export function useSelection(images: Image[], ready = true): Selection {
   const [ids, setIDs] = useState<Set<number>>(() => new Set());
-  // 範囲選択の起点。まだ何も触っていなければ null。
+  // 範囲選択の起点。一覧が組み替わっても同じ画像を指すよう、位置ではなく ID で覚える。
+  // まだ何も触っていなければ null。
   const anchor = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    const present = new Set(images.map((image) => image.id));
+    if (anchor.current !== null && !present.has(anchor.current)) {
+      anchor.current = null;
+    }
+    setIDs((prev) => {
+      const next = new Set([...prev].filter((id) => present.has(id)));
+      // 中身が変わらないときは同じ Set を返し、余計な描き直しを起こさない。
+      return next.size === prev.size ? prev : next;
+    });
+  }, [images, ready]);
 
   const toggle = useCallback(
     (index: number, shiftKey: boolean) => {
-      setIDs((prev) => {
-        const next = new Set(prev);
-        const from = anchor.current;
-        if (shiftKey && from !== null) {
+      // 起点は ID で覚えているため、今の一覧での位置を引き直す。
+      const from =
+        anchor.current === null
+          ? -1
+          : images.findIndex((image) => image.id === anchor.current);
+      if (shiftKey && from >= 0) {
+        setIDs((prev) => {
+          const next = new Set(prev);
           for (let i = Math.min(from, index); i <= Math.max(from, index); i++) {
             const image = images[i];
             if (image) {
@@ -302,12 +327,16 @@ export function useSelection(images: Image[]): Selection {
             }
           }
           return next;
-        }
-        const image = images[index];
-        anchor.current = index;
-        if (!image) {
-          return next;
-        }
+        });
+        return;
+      }
+      const image = images[index];
+      anchor.current = image ? image.id : null;
+      if (!image) {
+        return;
+      }
+      setIDs((prev) => {
+        const next = new Set(prev);
         if (next.has(image.id)) {
           next.delete(image.id);
         } else {

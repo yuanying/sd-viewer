@@ -102,6 +102,9 @@ let favRequests: { url: string; ids: number[] }[] = [];
 /** failFav が真なら、Fav の付け外しをすべて失敗させる。 */
 let failFav = false;
 
+/** failSearch が真なら、一覧の読み込みをすべて失敗させる。 */
+let failSearch = false;
+
 /** stubFetch は API の応答を差し替える。 */
 function stubFetch() {
   vi.stubGlobal(
@@ -188,6 +191,9 @@ function stubFetch() {
         });
       }
       if (url.startsWith("/api/images")) {
+        if (failSearch) {
+          return new Response("読み込めません", { status: 500, statusText: "Server Error" });
+        }
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const all = params.get("fav") === "1" ? live.filter((img) => img.fav_at) : live;
         const models = params.getAll("model");
@@ -233,6 +239,7 @@ beforeEach(() => {
   sent = [];
   favRequests = [];
   failFav = false;
+  failSearch = false;
   facetResponse = facets;
   webui = true;
   live = [image(1), image(2), image(3, { model: "modelB" })];
@@ -849,4 +856,105 @@ describe("大量の画像", () => {
       expect(limit).toBeLessThanOrEqual(maxLimit);
     }
   }, 30_000);
+});
+
+describe("一覧から消えた画像の選択", () => {
+  /** grid は一覧に出ているセルのボタンを返す。 */
+  const grid = () => screen.getAllByRole("button", { name: /0000/ });
+
+  /** stars はセルごとの Fav の切り替えを返す。 */
+  const stars = () => screen.getAllByRole("checkbox", { name: /を Fav$/ });
+
+  /** boxes は選択用のチェックボックスを返す。 */
+  const boxes = () => screen.getAllByRole("checkbox", { name: /を選択$/ });
+
+  /** box は 1 枚の選択用チェックボックスを返す。 */
+  const box = (name: string) => screen.getByLabelText<HTMLInputElement>(`${name} を選択`);
+
+  it("Fav のみの表示で選択中の画像を外すと、選択からも外れて件数が減る", async () => {
+    const user = userEvent.setup();
+    live = live.map((img) => ({ ...img, fav_at: "2026-08-21T10:00:00Z" }));
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    await user.click(boxes()[1]);
+    expect(screen.getByText("2 件選択中")).toBeTruthy();
+
+    await user.click(stars()[0]);
+
+    await waitFor(() => expect(favRequests).toEqual([{ url: "/api/fav/remove", ids: [1] }]));
+    await waitFor(() => expect(screen.getByText("1 件選択中")).toBeTruthy());
+    // 一覧に残っている画像の選択はそのまま。
+    expect(box("00002.png").checked).toBe(true);
+  });
+
+  it("絞り込みを変えて一覧から消えた画像は、選択から外れる", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    await user.click(boxes()[0]);
+    await user.click(boxes()[2]);
+    expect(screen.getByText("2 件選択中")).toBeTruthy();
+
+    await user.click(screen.getByRole("checkbox", { name: /modelB/ }));
+
+    await waitFor(() => expect(grid()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByText("1 件選択中")).toBeTruthy());
+    expect(box("00003.png").checked).toBe(true);
+  });
+
+  it("選択バーの操作は、一覧に残っている選択だけに効く", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(boxes()[2]);
+    await user.click(screen.getByRole("checkbox", { name: /modelB/ }));
+    await waitFor(() => expect(screen.getByText("1 件選択中")).toBeTruthy());
+
+    await user.click(screen.getByRole("button", { name: "ゴミ箱へ移動" }));
+
+    // 一覧から消えていた 00001.png には効かない。
+    await waitFor(() => expect(binned.map((img) => img.id)).toEqual([3]));
+  });
+
+  it("読み込みに失敗したときは選択を消さない", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+    await user.click(boxes()[0]);
+    await user.click(boxes()[1]);
+    expect(screen.getByText("2 件選択中")).toBeTruthy();
+
+    failSearch = true;
+    await user.click(screen.getByRole("checkbox", { name: /modelB/ }));
+
+    expect(await screen.findByText(/読み込みに失敗しました/)).toBeTruthy();
+    expect(screen.getByText("2 件選択中")).toBeTruthy();
+  });
+
+  it("消えた画像が起点でも、Shift で意図しない範囲を選ばない", async () => {
+    const user = userEvent.setup();
+    live = live.map((img) => ({ ...img, fav_at: "2026-08-21T10:00:00Z" }));
+    window.history.replaceState(null, "", "/?fav=1");
+    render(<App />);
+    await waitFor(() => expect(grid()).toHaveLength(3));
+
+    // 起点は 00001.png。Fav を外すと一覧から消え、選択からも外れる。
+    await user.click(boxes()[0]);
+    await user.click(stars()[0]);
+    await waitFor(() => expect(grid()).toHaveLength(2));
+    expect(screen.queryByText(/件選択中/)).toBeNull();
+
+    await user.keyboard("{Shift>}");
+    await user.click(box("00003.png"));
+    await user.keyboard("{/Shift}");
+
+    // 起点が消えているため、00002.png まで巻き込まない。
+    expect(screen.getByText("1 件選択中")).toBeTruthy();
+    expect(box("00002.png").checked).toBe(false);
+  });
 });
