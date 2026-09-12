@@ -27,7 +27,8 @@ export default function App() {
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<View>("images");
   const [notice, setNotice] = useState<string | null>(null);
-  const selection = useSelection(list.images);
+  // 一覧が読み込み中・読み込みに失敗している間は、一覧を当てに選択を見直さない。
+  const selection = useSelection(list.images, !list.loading && list.error === null);
   const bin = useTrash(view === "trash");
 
   // 監視によって枚数が変わったら一覧を取り直す。
