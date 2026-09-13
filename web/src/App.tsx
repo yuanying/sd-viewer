@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { emptyTrash, moveToTrash, purgeFromTrash, restoreFromTrash, setFav } from "./api";
 import { FacetPanel } from "./components/FacetPanel";
 import { ImageDetail } from "./components/ImageDetail";
@@ -31,16 +31,36 @@ export default function App() {
   const selection = useSelection(list.images, !list.loading && list.error === null);
   const bin = useTrash(view === "trash");
 
-  // 監視によって枚数が変わったら一覧を取り直す。
+  // 監視によって枚数が変わったら一覧と絞り込み候補を取り直す。
   const total = status?.total;
   const reload = list.reload;
   useEffect(() => {
     if (total !== undefined && total !== list.total) {
       reload();
+      refreshFacets();
     }
     // 表示中の件数は毎回変わるため、監視側の枚数だけを見る。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [total]);
+
+  /**
+   * neighbors は詳細で開いている画像の両隣を覚えておく。
+   * 開いた画像が一覧から消えても（「Fav のみ」の表示で Fav を外したときなど）詳細は開いたままに
+   * するため、← → の行き先を一覧から引けなくなる。消える直前の両隣を起点にして前後へ進む。
+   */
+  const neighbors = useRef<{ prev?: number; next?: number }>({});
+  useEffect(() => {
+    if (selected === null) {
+      neighbors.current = {};
+      return;
+    }
+    const at = list.images.findIndex((img) => img.id === selected);
+    if (at < 0) {
+      // 一覧から消えた画像。最後に居た位置の両隣をそのまま残す。
+      return;
+    }
+    neighbors.current = { prev: list.images[at - 1]?.id, next: list.images[at + 1]?.id };
+  }, [selected, list.images]);
 
   const move = useCallback(
     (step: number) => {
@@ -49,6 +69,11 @@ export default function App() {
           return current;
         }
         const at = list.images.findIndex((img) => img.id === current);
+        if (at < 0) {
+          // 一覧から消えた画像は位置を引けないため、覚えておいた両隣へ進む。
+          const to = step < 0 ? neighbors.current.prev : neighbors.current.next;
+          return to ?? current;
+        }
         const next = list.images[at + step];
         return next ? next.id : current;
       });
@@ -62,7 +87,10 @@ export default function App() {
   const clearSelection = selection.clear;
   const reloadBin = bin.reload;
 
-  /** apply はゴミ箱の操作を投げ、終わったら一覧と件数を取り直す。 */
+  /**
+   * apply はゴミ箱の操作を投げ、終わったら一覧と件数、絞り込み候補を取り直す。
+   * ゴミ箱に出し入れした画像は一覧に出る範囲から必ず増減するため、候補は条件を問わず取り直す。
+   */
   const apply = useCallback(
     (run: () => Promise<TrashResult>) => {
       run()
@@ -72,10 +100,11 @@ export default function App() {
           reload();
           reloadBin();
           refresh();
+          refreshFacets();
         })
         .catch((err: unknown) => setNotice(errorMessage(err)));
     },
-    [clearSelection, reload, reloadBin, refresh],
+    [clearSelection, reload, reloadBin, refresh, refreshFacets],
   );
 
   /**
